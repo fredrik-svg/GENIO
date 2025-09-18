@@ -1,9 +1,18 @@
 
 import logging
-import threading, time
+import re
+import shutil
+import tempfile
+import threading
+import time
+import urllib.request
+from pathlib import Path
 from typing import Callable, List, Optional
 
-from openwakeword import Model
+try:
+    from openwakeword import Model
+except ImportError:  # pragma: no cover - optional dependency on Pi
+    Model = None  # type: ignore[assignment]
 
 # Enkel wrapper för att köra openWakeWord i bakgrunden och trigga callback.
 # Standardfras: "Hej kompis" via en allmän modell med fraströskel.
@@ -22,13 +31,32 @@ class WakeWordListener:
         self._thread: Optional[threading.Thread] = None
 
         # Laddar standardmodeller (engelska/svenska kan fungera okej för enkla fraser).
+        if Model is None:
+            logger.warning(
+                "openwakeword is not installed; wake word detection disabled. Install the optional dependency to enable it."
+            )
+            return
         try:
             self.model = Model(enable_speex_noise_suppression=True)
         except Exception as exc:  # pragma: no cover - defensive guard against optional dependency issues
-            logger.warning(
-                "Wake word model could not be loaded, disabling wake word detection: %s",
-                exc,
-            )
+            recovered = False
+            missing_path = _extract_missing_model_path(exc)
+            if missing_path:
+                recovered = _try_recover_missing_model(missing_path)
+                if recovered:
+                    try:
+                        self.model = Model(enable_speex_noise_suppression=True)
+                    except Exception as second_exc:  # pragma: no cover - still failing → log original context
+                        logger.warning(
+                            "Wake word model could not be loaded even after attempting recovery: %s",
+                            second_exc,
+                        )
+                        return
+            if not recovered:
+                logger.warning(
+                    "Wake word model could not be loaded, disabling wake word detection: %s",
+                    exc,
+                )
 
     def start(self):
         if self.model is None:
@@ -71,3 +99,52 @@ class WakeWordListener:
                     # Debounce
                     self.on_detect()
                     time.sleep(2.0)  # undvik retrigger direkt
+
+
+def _extract_missing_model_path(exc: Exception) -> Optional[Path]:
+    """Försök hitta sökvägen till en saknad TFLite-modell i felmeddelandet."""
+
+    message = str(exc)
+    match = re.search(r"'([^']+\.tflite)'", message)
+    if not match:
+        return None
+    return Path(match.group(1))
+
+
+def _try_recover_missing_model(target_path: Path) -> bool:
+    """Försök ladda ner standardmodellen från openwakewords GitHub om den saknas."""
+
+    if target_path.exists():
+        return True
+
+    base_url = "https://github.com/dscripka/openwakeword/raw/main/openwakeword/resources/models/"
+    url = base_url + target_path.name
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:  # nosec - kontrollerad URL
+            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                shutil.copyfileobj(response, tmp_file)
+                tmp_name = tmp_file.name
+    except Exception as download_error:  # pragma: no cover - nätverksfel bör endast loggas
+        logger.warning(
+            "Wake word model %s could not be downloaded from %s: %s",
+            target_path.name,
+            url,
+            download_error,
+        )
+        return False
+
+    try:
+        shutil.move(tmp_name, target_path)
+    except Exception as move_error:  # pragma: no cover - oskrivbara kataloger etc.
+        logger.warning(
+            "Wake word model %s could not be placed at %s: %s",
+            target_path.name,
+            target_path,
+            move_error,
+        )
+        return False
+
+    logger.info("Downloaded missing wake word model: %s", target_path)
+    return True
