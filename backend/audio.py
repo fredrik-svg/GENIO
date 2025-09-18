@@ -125,17 +125,17 @@ def record_until_silence() -> np.ndarray:
                 open_stream, device, {SAMPLE_RATE}
             )
         except sd.PortAudioError as fallback_exc:
-            logger.error(
+            logger.warning(
                 "Could not open any audio input stream (PortAudioError): %s",
                 fallback_exc,
             )
             return np.zeros((0,), dtype=np.float32)
         except Exception as fallback_exc:  # pragma: no cover - defensive
-            logger.error("Could not open any audio input stream: %s", fallback_exc)
+            logger.warning("Could not open any audio input stream: %s", fallback_exc)
             return np.zeros((0,), dtype=np.float32)
 
     if stream is None:
-        logger.error("Audio input stream could not be created; returning silence.")
+        logger.warning("Audio input stream could not be created; returning silence.")
         return np.zeros((0,), dtype=np.float32)
     audio_chunks = []
     with stream:
