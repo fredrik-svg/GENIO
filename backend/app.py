@@ -1,14 +1,16 @@
 
-import asyncio, os, subprocess, logging
+import asyncio, os, subprocess, logging, shlex
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 
 from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH
-from .audio import record_until_silence, save_wav_mono16
+from .audio import record_until_silence, save_wav_mono16, play_wav_bytes
 from .openai_client import stt_transcribe_wav, chat_reply_sv, tts_speak_sv
 from .wakeword import WakeWordListener
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Pi5 Swedish Voice Assistant")
 
@@ -82,13 +84,38 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
 
     # Spara och spela upp
     out_path = OUTPUT_WAV_PATH
-    with open(out_path,"wb") as f:
+    with open(out_path, "wb") as f:
         f.write(wav_reply)
-    # play (blocking)
-    try:
-        subprocess.run(PLAY_CMD.split() + [out_path], check=False)
-    except Exception:
-        pass
+
+    played = False
+    play_cmd = (PLAY_CMD or "").strip()
+    if play_cmd:
+        try:
+            subprocess.run(shlex.split(play_cmd) + [out_path], check=True)
+            played = True
+        except FileNotFoundError:
+            logger.warning(
+                "Playback command '%s' was not found; falling back to sounddevice.",
+                play_cmd,
+            )
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "Playback command '%s' failed with exit code %s; falling back to sounddevice.",
+                play_cmd,
+                exc.returncode,
+            )
+        except Exception as exc:
+            logger.error("Playback command error (%s); falling back to sounddevice.", exc)
+
+    if not played:
+        try:
+            play_wav_bytes(wav_reply)
+            played = True
+        except Exception as exc:
+            logger.error("Could not play audio with sounddevice: %s", exc)
+
+    if not played:
+        await notify("status: Kunde inte spela upp ljudet.")
 
     return {"ok": True, "question": text, "answer": reply}
 
