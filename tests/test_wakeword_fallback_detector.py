@@ -1,3 +1,5 @@
+import pytest
+
 from backend import wakeword
 
 def test_energy_detector_triggers_after_sustained_energy():
@@ -82,11 +84,22 @@ def test_listener_uses_porcupine_when_available(monkeypatch):
     monkeypatch.setattr(wakeword, "pvporcupine", dummy_module)
     monkeypatch.delenv("PORCUPINE_KEYWORDS", raising=False)
     monkeypatch.delenv("PORCUPINE_KEYWORD_PATHS", raising=False)
-    monkeypatch.delenv("PICOVOICE_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("PICOVOICE_ACCESS_KEY", "dummy-access-key")
 
     listener = wakeword.WakeWordListener(on_detect=lambda: None, detection_threshold=0.7)
 
     assert listener.detector_name == "porcupine"
     assert dummy_module.kwargs["keywords"] == ["porcupine"]
     assert dummy_module.kwargs["sensitivities"] == [0.7]
+    assert dummy_module.kwargs["access_key"] == "dummy-access-key"
+
+
+def test_porcupine_requires_access_key():
+    with pytest.raises(ValueError):
+        wakeword._porcupine_create_kwargs(
+            0.5,
+            keywords_env=None,
+            keyword_paths_env=None,
+            access_key=None,
+        )
 

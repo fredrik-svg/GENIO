@@ -274,6 +274,12 @@ def _porcupine_create_kwargs(
     keywords = _parse_env_list(keywords_env)
 
     kwargs: dict[str, Any] = {}
+
+    if not access_key:
+        raise ValueError(
+            "PICOVOICE_ACCESS_KEY must be set to use Porcupine wake word detection"
+        )
+
     if keyword_paths:
         kwargs["keyword_paths"] = keyword_paths
         count = len(keyword_paths)
@@ -287,7 +293,6 @@ def _porcupine_create_kwargs(
     sensitivity = _clamp_sensitivity(detection_threshold)
     kwargs["sensitivities"] = [sensitivity] * count
 
-    if access_key:
-        kwargs["access_key"] = access_key
+    kwargs["access_key"] = access_key
 
     return kwargs
