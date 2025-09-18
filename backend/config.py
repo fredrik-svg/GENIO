@@ -20,7 +20,8 @@ def env(key: str, default: str | None = None):
 
 SAMPLE_RATE = int(env("SAMPLE_RATE", "16000"))
 MAX_RECORD_SECONDS = float(env("MAX_RECORD_SECONDS", "12"))
-SILENCE_DURATION = float(env("SILENCE_DURATION", "1.0"))
+# Tillåt längre tystnad efter aktiverad mikrofon innan inspelningen avslutas.
+SILENCE_DURATION = float(env("SILENCE_DURATION", "2.5"))
 ENERGY_THRESHOLD = float(env("ENERGY_THRESHOLD", "0.015"))  # justera vid behov
 
 CHAT_MODEL = env("CHAT_MODEL","gpt-4o-mini")

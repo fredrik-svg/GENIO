@@ -47,11 +47,42 @@
     const askInput = document.getElementById('ask-input');
     const askSubmit = document.getElementById('ask-submit');
 
-    function addBubble(text, who){
-      const div = document.createElement('div');
-      div.className = 'bubble ' + (who || 'assistant');
-      div.textContent = text;
-      log.prepend(div);
+    let lastQuestion = '';
+    let lastAnswer = '';
+
+    function renderConversation(){
+      log.innerHTML = '';
+      if(lastQuestion){
+        const questionDiv = document.createElement('div');
+        questionDiv.className = 'bubble user';
+        questionDiv.textContent = 'Du: ' + lastQuestion;
+        log.appendChild(questionDiv);
+      }
+      if(lastAnswer){
+        const answerDiv = document.createElement('div');
+        answerDiv.className = 'bubble assistant';
+        answerDiv.textContent = 'Assistent: ' + lastAnswer;
+        log.appendChild(answerDiv);
+      }
+    }
+
+    function setQuestion(questionText){
+      lastQuestion = questionText || '';
+      if(lastQuestion){
+        lastAnswer = '';
+      }
+      renderConversation();
+    }
+
+    function setAnswer(answerText){
+      lastAnswer = answerText || '';
+      renderConversation();
+    }
+
+    function setConversation(questionText, answerText){
+      lastQuestion = questionText || '';
+      lastAnswer = answerText || '';
+      renderConversation();
     }
 
     btn.addEventListener('click', async () => {
@@ -61,8 +92,7 @@
         const res = await fetch('/api/converse', { method:'POST' });
         const data = await res.json();
         if(data.ok){
-          addBubble('Du: ' + data.question, 'user');
-          addBubble('Assistent: ' + data.answer, 'assistant');
+          setConversation(data.question, data.answer);
           statusEl.textContent = 'Klar. Tryck igen eller säg ”Hej kompis”.';
         }else{
           statusEl.textContent = 'Hörde inget – prova igen.';
@@ -94,8 +124,7 @@
         });
         const data = await res.json();
         if(res.ok && data.ok){
-          addBubble('Du: ' + data.question, 'user');
-          addBubble('Assistent: ' + data.answer, 'assistant');
+          setConversation(data.question, data.answer);
           statusEl.textContent = 'Klar. Ställ en ny fråga eller prata med knappen.';
           askInput.value = '';
         }else{
@@ -117,9 +146,9 @@
       if(msg.startsWith('status:')){
         statusEl.textContent = msg.replace('status:','').trim();
       }else if(msg.startsWith('du:')){
-        addBubble('Du: ' + msg.slice(3).trim(), 'user');
+        setQuestion(msg.slice(3).trim());
       }else if(msg.startsWith('assistent:')){
-        addBubble('Assistent: ' + msg.slice(10).trim(), 'assistant');
+        setAnswer(msg.slice(10).trim());
       }else if(msg.startsWith('fel:')){
         statusEl.textContent = msg;
       }
