@@ -3,9 +3,12 @@ import contextlib
 import io
 import logging
 import math
+import os
 import queue
 import time
 import wave
+
+from typing import BinaryIO, cast
 
 import numpy as np
 import sounddevice as sd
@@ -218,17 +221,71 @@ def record_until_silence() -> np.ndarray:
             audio = audio / peak * 0.97
     return audio
 
-def save_wav_mono16(path: str, audio: np.ndarray, sample_rate: int = SAMPLE_RATE):
-    """Sparar float32 [-1..1] som 16-bit PCM WAV."""
+def save_wav_mono16(
+    destination: str | os.PathLike[str] | BinaryIO,
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+) -> None:
+    """Spara ``audio`` som mono 16-bit PCM WAV.
 
-    wav = wave.open(path, 'wb')
-    wav.setnchannels(1)
-    wav.setsampwidth(2)
-    wav.setframerate(sample_rate)
-    # konvertera till int16
-    ints = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
-    wav.writeframes(ints.tobytes())
-    wav.close()
+    ``destination`` kan vara en sökväg eller ett filobjekt med ett ``write``-
+    gränssnitt. För filobjekt försöker vi lämna strömmen öppen efteråt så att
+    anroparen kan läsa resultatet utan att behöva skriva till disk.
+    """
+
+    float_audio = np.asarray(audio, dtype=np.float32)
+    if float_audio.ndim > 1:
+        float_audio = float_audio.reshape(-1)
+    ints = np.clip(float_audio * 32767.0, -32768, 32767).astype(np.int16)
+
+    def _write(wav_file: wave.Wave_write) -> None:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(ints.tobytes())
+
+    if hasattr(destination, "write") and not isinstance(destination, (str, os.PathLike)):
+        binary = cast(BinaryIO, destination)
+
+        class _NonClosingAdapter:
+            def __init__(self, raw: BinaryIO) -> None:
+                self._raw = raw
+
+            def write(self, data: bytes) -> int:
+                return self._raw.write(data)
+
+            def tell(self) -> int:
+                return self._raw.tell()
+
+            def seek(self, offset: int, whence: int = io.SEEK_SET):
+                return self._raw.seek(offset, whence)
+
+            def close(self) -> None:
+                # ``wave`` försöker stänga strömmen – ignorera för att låta
+                # anroparen hantera livscykeln.
+                return None
+
+        adapter = _NonClosingAdapter(binary)
+        wav_file = wave.open(adapter, "wb")
+        try:
+            _write(wav_file)
+        finally:
+            wav_file.close()
+
+        try:
+            binary.flush()
+        except AttributeError:
+            pass
+        except OSError:
+            logger.debug("Failed to flush WAV destination", exc_info=True)
+        try:
+            binary.seek(0)
+        except (AttributeError, OSError, ValueError):
+            pass
+        return
+
+    with wave.open(destination, "wb") as wav_file:
+        _write(wav_file)
 
 
 def play_wav_bytes(data: bytes) -> None:
