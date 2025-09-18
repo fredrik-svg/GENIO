@@ -1,9 +1,16 @@
 
-import queue, time, math
+import logging
+import queue
+import time
+import math
+
 import numpy as np
 import sounddevice as sd
 
 from .config import SAMPLE_RATE, MAX_RECORD_SECONDS, SILENCE_DURATION, ENERGY_THRESHOLD, INPUT_DEVICE
+
+
+logger = logging.getLogger(__name__)
 
 def rms_energy(audio: np.ndarray) -> float:
     """Returnera RMS-energi (0..1 ungefär)."""
@@ -23,13 +30,42 @@ def record_until_silence() -> np.ndarray:
             pass
         q.put(indata.copy())
 
-    stream = sd.InputStream(device=INPUT_DEVICE if INPUT_DEVICE else None,
-        samplerate=SAMPLE_RATE,
-        channels=channels,
-        dtype="float32",
-        blocksize=blocksize,
-        callback=callback,
-    )
+    device = INPUT_DEVICE if INPUT_DEVICE else None
+
+    def open_stream(sample_rate: int) -> sd.InputStream:
+        return sd.InputStream(
+            device=device,
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="float32",
+            blocksize=blocksize,
+            callback=callback,
+        )
+
+    effective_sample_rate = SAMPLE_RATE
+    try:
+        stream = open_stream(SAMPLE_RATE)
+    except sd.PortAudioError as exc:
+        logger.warning("Failed to open input stream at %d Hz: %s", SAMPLE_RATE, exc)
+        fallback_rate = None
+        try:
+            device_info = sd.query_devices(device, "input")
+            fallback_rate = device_info.get("default_samplerate")
+        except Exception as info_exc:  # pragma: no cover - defensive
+            logger.error("Could not query input device info: %s", info_exc)
+        if fallback_rate and math.isfinite(fallback_rate) and fallback_rate > 0:
+            effective_sample_rate = int(round(fallback_rate))
+            logger.info("Retrying recording with fallback sample rate %d Hz", effective_sample_rate)
+            try:
+                stream = open_stream(effective_sample_rate)
+            except sd.PortAudioError:
+                logger.error(
+                    "Fallback sample rate %d Hz also failed; giving up.",
+                    effective_sample_rate,
+                )
+                raise
+        else:
+            raise
     audio_chunks = []
     with stream:
         start = time.time()
@@ -55,6 +91,15 @@ def record_until_silence() -> np.ndarray:
     if not audio_chunks:
         return np.zeros((0,), dtype=np.float32)
     audio = np.concatenate(audio_chunks, axis=0).astype(np.float32)
+
+    if effective_sample_rate != SAMPLE_RATE and audio.size > 0:
+        duration = audio.size / float(effective_sample_rate)
+        target_length = max(1, int(round(duration * SAMPLE_RATE)))
+        if target_length > 0:
+            old_times = np.linspace(0.0, duration, num=audio.size, endpoint=False, dtype=np.float64)
+            new_times = np.linspace(0.0, duration, num=target_length, endpoint=False, dtype=np.float64)
+            audio = np.interp(new_times, old_times, audio).astype(np.float32)
+            logger.info("Resampled audio from %d Hz to %d Hz", effective_sample_rate, SAMPLE_RATE)
     # normalisera lätt
     if len(audio) > 0:
         peak = np.max(np.abs(audio))
