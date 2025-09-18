@@ -68,6 +68,7 @@ sudo systemctl start pi5-assistant
 - **Chat**: `gpt-4o-mini` (snabbt/billigt) med svensk systemprompt.
 - **TTS**: OpenAI TTS (`gpt-4o-mini-tts`) → WAV → uppspelning med `aplay`.
 - **Wakeword**: `openwakeword` (lokalt, låg CPU).
+- **Wakeword-modeller**: `openwakeword-models` installeras via `requirements.txt` så att de förtränade TFLite-filerna finns lokalt.
 - **Frontend**: Statisk HTML/JS med stor touchknapp, status och text.
 
 ## Konfig
