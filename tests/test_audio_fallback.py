@@ -1,8 +1,10 @@
 from types import SimpleNamespace
 
+import logging
+
 import pytest
 
-pytest.importorskip("numpy")
+np = pytest.importorskip("numpy")
 
 import backend.audio as audio
 
@@ -100,3 +102,37 @@ def test_gather_handles_query_errors(monkeypatch):
     rates = audio._gather_fallback_sample_rates(None, {audio.SAMPLE_RATE})
 
     assert 48000 in rates
+
+
+def test_record_until_silence_returns_silence_when_input_unavailable(monkeypatch, caplog):
+    class DummyStreamError(Exception):
+        pass
+
+    def make_dummy_input_stream(**_kwargs):
+        raise DummyStreamError("device unavailable")
+
+    dummy_sd = SimpleNamespace(
+        PortAudioError=DummyStreamError,
+        InputStream=lambda *args, **kwargs: make_dummy_input_stream(**kwargs),
+        query_devices=lambda device, kind: {},
+        default=SimpleNamespace(samplerate=None),
+    )
+
+    monkeypatch.setattr(audio, "sd", dummy_sd)
+
+    caplog.set_level(logging.DEBUG)
+
+    audio_data = audio.record_until_silence()
+
+    assert isinstance(audio_data, np.ndarray)
+    assert audio_data.size == 0
+    assert all(
+        record.levelno < logging.ERROR
+        for record in caplog.records
+        if record.name == audio.__name__
+    )
+    assert any(
+        "Could not open any audio input stream" in record.getMessage()
+        for record in caplog.records
+        if record.name == audio.__name__
+    )
