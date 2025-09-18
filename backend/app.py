@@ -11,8 +11,15 @@ from .wakeword import WakeWordListener
 
 app = FastAPI(title="Pi5 Swedish Voice Assistant")
 
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+
 # serve frontend
-app.mount("/", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static"), html=True), name="static")
+app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> FileResponse:
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 # simple status broadcast (optional)
 clients = set()
