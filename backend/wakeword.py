@@ -1,27 +1,19 @@
 from __future__ import annotations
 
 import logging
-import re
-import shutil
-import tempfile
+import math
+import os
 import threading
 import time
-import urllib.request
-from urllib.error import HTTPError
-from pathlib import Path
-from typing import Callable, List, Optional, Tuple
-
-import math
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 try:
-    from openwakeword import Model
+    import pvporcupine
 except ImportError:  # pragma: no cover - optional dependency on Pi
-    Model = None  # type: ignore[assignment]
+    pvporcupine = None  # type: ignore[assignment]
 
-# Enkel wrapper för att köra openWakeWord i bakgrunden och trigga callback.
-# Standardfras: "Hej kompis" via en allmän modell med fraströskel.
-# För bästa resultat, träna/finjustera egen modell och ange filväg här.
-WW_PHRASES: List[str] = ["hej kompis", "hejkompis"]
+
+DEFAULT_PORCUPINE_KEYWORDS: Tuple[str, ...] = ("porcupine",)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +30,7 @@ class WakeWordListener:
         self.on_detect = on_detect
         self.detection_threshold = detection_threshold
         self._stop = threading.Event()
-        self.model: Optional[Model] = None
+        self._porcupine: Optional[Any] = None
         self._thread: Optional[threading.Thread] = None
         self._detector: Optional[_BaseWakeWordDetector] = None
         self._detector_name = "none"
@@ -54,32 +46,29 @@ class WakeWordListener:
             )
             self._detector_name = "energy"
 
-        # Laddar standardmodeller (engelska/svenska kan fungera okej för enkla fraser).
-        if Model is None:
-            configure_fallback_detector("openwakeword is not installed")
+        if pvporcupine is None:
+            configure_fallback_detector("pvporcupine is not installed")
             return
-        try:
-            self.model = Model(enable_speex_noise_suppression=True)
-        except Exception as exc:  # pragma: no cover - defensive guard against optional dependency issues
-            missing_path = _extract_missing_model_path(exc)
-            if missing_path and _try_recover_missing_model(missing_path):
-                try:
-                    self.model = Model(enable_speex_noise_suppression=True)
-                except Exception as second_exc:  # pragma: no cover - still failing → log original context
-                    logger.warning(
-                        "Wake word model could not be loaded even after attempting recovery: %s",
-                        second_exc,
-                    )
-                    self.model = None
-            if self.model is None:
-                configure_fallback_detector(
-                    f"Wake word model could not be loaded: {exc}"
-                )
-                return
 
-        assert self.model is not None  # För typkontroll
-        self._detector = _OpenWakeWordDetector(self.model, detection_threshold)
-        self._detector_name = "openwakeword"
+        try:
+            kwargs = _porcupine_create_kwargs(
+                detection_threshold,
+                keywords_env=os.getenv("PORCUPINE_KEYWORDS"),
+                keyword_paths_env=os.getenv("PORCUPINE_KEYWORD_PATHS"),
+                access_key=os.getenv("PICOVOICE_ACCESS_KEY"),
+            )
+        except ValueError as config_error:
+            configure_fallback_detector(str(config_error))
+            return
+
+        try:
+            self._porcupine = pvporcupine.create(**kwargs)
+        except Exception as exc:  # pragma: no cover - defensive guard against optional dependency issues
+            configure_fallback_detector(f"Porcupine could not be initialised: {exc}")
+            return
+
+        self._detector = _PorcupineWakeWordDetector(self._porcupine)
+        self._detector_name = "porcupine"
 
     def start(self):
         if self._detector is None:
@@ -107,13 +96,20 @@ class WakeWordListener:
             import numpy as np
         except ImportError:  # pragma: no cover - numpy bör finnas i produktion
             np = None  # type: ignore[assignment]
-        samplerate = 16000
-        blocksize = 512
-        with sd.InputStream(channels=1, samplerate=samplerate, blocksize=blocksize, dtype="float32") as stream:
+
+        samplerate = getattr(self._detector, "sample_rate", 16000)
+        blocksize = getattr(self._detector, "frame_length", 512)
+
+        with sd.InputStream(
+            channels=1,
+            samplerate=samplerate,
+            blocksize=blocksize,
+            dtype="float32",
+        ) as stream:
             while not self._stop.is_set():
                 audio_block, _ = stream.read(blocksize)
                 if np is not None:
-                    y = audio_block[:, 0].astype(np.float32)
+                    y = audio_block[:, 0].astype(np.float32, copy=False)
                 else:  # pragma: no cover - numpy saknas endast i testmiljöer
                     y = [float(sample[0]) for sample in audio_block]
                 if self._detector.process(y):
@@ -127,23 +123,38 @@ class WakeWordListener:
 
 class _BaseWakeWordDetector:
     cooldown: float = 2.0
+    sample_rate: int = 16000
+    frame_length: int = 512
 
     def process(self, audio) -> bool:  # pragma: no cover - interface definition only
         raise NotImplementedError
 
+    def close(self) -> None:  # pragma: no cover - optional cleanup hook
+        return
 
-class _OpenWakeWordDetector(_BaseWakeWordDetector):
-    def __init__(self, model: Model, detection_threshold: float) -> None:
-        self.model = model
-        self.detection_threshold = detection_threshold
-        self.cooldown = 2.0
+
+class _PorcupineWakeWordDetector(_BaseWakeWordDetector):
+    def __init__(self, porcupine_instance: Any) -> None:
+        self._porcupine = porcupine_instance
+        self.sample_rate = int(getattr(porcupine_instance, "sample_rate", 16000))
+        self.frame_length = int(getattr(porcupine_instance, "frame_length", 512))
+        self.cooldown = 1.0
 
     def process(self, audio) -> bool:
-        scores = self.model.predict(audio)
-        max_score = 0.0
-        for _, score in scores.items():
-            max_score = max(max_score, float(score))
-        return max_score >= self.detection_threshold
+        pcm = _ensure_int16(audio)
+        if _audio_length(pcm) != self.frame_length:
+            return False
+        result = self._porcupine.process(pcm)
+        try:
+            detected = int(result) >= 0
+        except (TypeError, ValueError):  # pragma: no cover - defensive conversion guard
+            detected = False
+        return detected
+
+    def close(self) -> None:  # pragma: no cover - best effort cleanup
+        delete = getattr(self._porcupine, "delete", None)
+        if callable(delete):
+            delete()
 
 
 class _EnergyWakeWordDetector(_BaseWakeWordDetector):
@@ -215,85 +226,68 @@ def _rms_energy(audio) -> float:
     return float(np.sqrt(np.mean(np.square(arr))))
 
 
-def _extract_missing_model_path(exc: Exception) -> Optional[Path]:
-    """Försök hitta sökvägen till en saknad TFLite-modell i felmeddelandet."""
-
-    message = str(exc)
-    match = re.search(r"'([^']+\.tflite)'", message)
-    if not match:
-        return None
-    return Path(match.group(1))
-
-
-MODEL_BASE_URLS: Tuple[str, ...] = (
-    "https://huggingface.co/dscripka/openwakeword/resolve/main/models/",
-    "https://raw.githubusercontent.com/dscripka/openwakeword/main/openwakeword/resources/models/",
-    "https://github.com/dscripka/openwakeword/raw/main/openwakeword/resources/models/",
-)
-
-
-def _try_recover_missing_model(target_path: Path) -> bool:
-    """Försök ladda ner standardmodellen från openwakewords GitHub om den saknas."""
-
-    if target_path.exists():
-        return True
-
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
-    download_error: Optional[Exception] = None
-    tmp_name: Optional[str] = None
-    for base_url in MODEL_BASE_URLS:
-        url = base_url + target_path.name
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": "GENIO/1.0 wakeword recovery"})
-            with urllib.request.urlopen(request, timeout=30) as response:  # nosec - kontrollerad URL
-                with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                    shutil.copyfileobj(response, tmp_file)
-                    tmp_name = tmp_file.name
-        except HTTPError as http_error:
-            download_error = http_error
-            if http_error.code == 404:
-                logger.debug("Wake word model %s not found at %s", target_path.name, url)
-                continue
-            logger.warning(
-                "Wake word model %s could not be downloaded from %s: %s",
-                target_path.name,
-                url,
-                http_error,
-            )
-            return False
-        except Exception as generic_error:  # pragma: no cover - nätverksfel bör endast loggas
-            download_error = generic_error
-            logger.warning(
-                "Wake word model %s could not be downloaded from %s: %s",
-                target_path.name,
-                url,
-                generic_error,
-            )
-            return False
-        else:
-            break
-    else:
-        logger.warning(
-            "Wake word model %s could not be downloaded from any known source: %s",
-            target_path.name,
-            download_error,
-        )
-        return False
-
-    if tmp_name is None:  # pragma: no cover - defensive guard
-        return False
-
+def _ensure_int16(audio: Sequence[float]):
     try:
-        shutil.move(tmp_name, target_path)
-    except Exception as move_error:  # pragma: no cover - oskrivbara kataloger etc.
-        logger.warning(
-            "Wake word model %s could not be placed at %s: %s",
-            target_path.name,
-            target_path,
-            move_error,
-        )
-        return False
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy saknas endast i testmiljöer
+        pcm: List[int] = []
+        for sample in audio:
+            value = max(min(float(sample), 1.0), -1.0)
+            pcm.append(int(value * 32767))
+        return pcm
 
-    logger.info("Downloaded missing wake word model: %s", target_path)
-    return True
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.size == 0:
+        return np.zeros(0, dtype=np.int16)
+    clipped = np.clip(arr, -1.0, 1.0)
+    return (clipped * 32767).astype(np.int16, copy=False)
+
+
+def _parse_env_list(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    items: List[str] = []
+    for entry in value.split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        if item.startswith("~"):
+            item = os.path.expanduser(item)
+        items.append(item)
+    return items
+
+
+def _clamp_sensitivity(value: float) -> float:
+    if math.isnan(value):  # pragma: no cover - defensive guard
+        return 0.5
+    return float(min(max(value, 0.0), 1.0))
+
+
+def _porcupine_create_kwargs(
+    detection_threshold: float,
+    *,
+    keywords_env: Optional[str],
+    keyword_paths_env: Optional[str],
+    access_key: Optional[str],
+) -> dict[str, Any]:
+    keyword_paths = _parse_env_list(keyword_paths_env)
+    keywords = _parse_env_list(keywords_env)
+
+    kwargs: dict[str, Any] = {}
+    if keyword_paths:
+        kwargs["keyword_paths"] = keyword_paths
+        count = len(keyword_paths)
+    else:
+        resolved_keywords = keywords or list(DEFAULT_PORCUPINE_KEYWORDS)
+        if not resolved_keywords:
+            raise ValueError("No Porcupine keywords configured")
+        kwargs["keywords"] = resolved_keywords
+        count = len(resolved_keywords)
+
+    sensitivity = _clamp_sensitivity(detection_threshold)
+    kwargs["sensitivities"] = [sensitivity] * count
+
+    if access_key:
+        kwargs["access_key"] = access_key
+
+    return kwargs

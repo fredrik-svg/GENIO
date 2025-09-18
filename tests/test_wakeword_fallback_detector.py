@@ -48,25 +48,45 @@ def test_energy_detector_triggers_after_sustained_energy():
     assert detector.process(high) is True
 
 
-def test_listener_uses_energy_fallback_when_model_missing(monkeypatch):
-    monkeypatch.setattr(wakeword, "Model", None)
+def test_listener_uses_energy_fallback_when_module_missing(monkeypatch):
+    monkeypatch.setattr(wakeword, "pvporcupine", None)
 
     listener = wakeword.WakeWordListener(on_detect=lambda: None)
 
     assert listener.detector_name == "energy"
 
 
-def test_listener_uses_openwakeword_when_available(monkeypatch):
-    class DummyModel:
-        def __init__(self, *args, **kwargs):
-            pass
+def test_listener_uses_porcupine_when_available(monkeypatch):
+    class DummyPorcupine:
+        sample_rate = 16000
+        frame_length = 256
 
-        def predict(self, audio):
-            return {"hej": 0.7}
+        def __init__(self):
+            self.deleted = False
 
-    monkeypatch.setattr(wakeword, "Model", DummyModel)
+        def process(self, pcm):
+            return -1
 
-    listener = wakeword.WakeWordListener(on_detect=lambda: None, detection_threshold=0.5)
+        def delete(self):  # pragma: no cover - exercised indirectly when stop is called
+            self.deleted = True
 
-    assert listener.detector_name == "openwakeword"
+    class DummyModule:
+        def __init__(self):
+            self.kwargs = None
+
+        def create(self, **kwargs):
+            self.kwargs = kwargs
+            return DummyPorcupine()
+
+    dummy_module = DummyModule()
+    monkeypatch.setattr(wakeword, "pvporcupine", dummy_module)
+    monkeypatch.delenv("PORCUPINE_KEYWORDS", raising=False)
+    monkeypatch.delenv("PORCUPINE_KEYWORD_PATHS", raising=False)
+    monkeypatch.delenv("PICOVOICE_ACCESS_KEY", raising=False)
+
+    listener = wakeword.WakeWordListener(on_detect=lambda: None, detection_threshold=0.7)
+
+    assert listener.detector_name == "porcupine"
+    assert dummy_module.kwargs["keywords"] == ["porcupine"]
+    assert dummy_module.kwargs["sensitivities"] == [0.7]
 
