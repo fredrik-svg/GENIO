@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pi5 Röstassistent (Svenska)</title>
+  <style>
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#0b1220; color:#eef2ff; }
+    .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; padding:24px; }
+    .btn { font-size:28px; padding:24px 32px; border-radius:20px; background:#1f2a44; border:2px solid #3c4a6b; color:#fff; cursor:pointer; }
+    .btn:active { transform: scale(0.98); }
+    .status { font-size:18px; opacity:0.9; }
+    .bubble { max-width: 800px; width: 95%; padding: 16px 18px; border-radius: 16px; line-height: 1.4; }
+    .user { background: #12233f; }
+    .assistant { background: #1a2f54; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Pi5 Röstassistent 🇸🇪</h1>
+    <button class="btn" id="talk">Tryck för att prata</button>
+    <div class="status" id="status">Redo. Säg ”Hej kompis” eller tryck på knappen.</div>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const log = document.getElementById('log');
+    const btn = document.getElementById('talk');
+
+    function addBubble(text, who){
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (who || 'assistant');
+      div.textContent = text;
+      log.prepend(div);
+    }
+
+    btn.addEventListener('click', async () => {
+      statusEl.textContent = 'Lyssnar ...';
+      btn.disabled = true;
+      try{
+        const res = await fetch('/api/converse', { method:'POST' });
+        const data = await res.json();
+        if(data.ok){
+          addBubble('Du: ' + data.question, 'user');
+          addBubble('Assistent: ' + data.answer, 'assistant');
+          statusEl.textContent = 'Klar. Tryck igen eller säg ”Hej kompis”.';
+        }else{
+          statusEl.textContent = 'Hörde inget – prova igen.';
+        }
+      }catch(e){
+        statusEl.textContent = 'Fel: ' + e;
+      }finally{
+        btn.disabled = false;
+      }
+    });
+
+    // websocket status
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.onmessage = (ev) => {
+      const msg = ev.data;
+      if(msg.startsWith('status:')){
+        statusEl.textContent = msg.replace('status:','').trim();
+      }else if(msg.startsWith('du:')){
+        addBubble('Du: ' + msg.slice(3).trim(), 'user');
+      }else if(msg.startsWith('assistent:')){
+        addBubble('Assistent: ' + msg.slice(10).trim(), 'assistant');
+      }else if(msg.startsWith('fel:')){
+        statusEl.textContent = msg;
+      }
+    };
+  </script>
+</body>
+</html>
