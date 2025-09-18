@@ -15,12 +15,12 @@ def test_porcupine_kwargs_default_keyword():
         0.3,
         keywords_env=None,
         keyword_paths_env=None,
-        access_key=None,
+        access_key="abc",
     )
 
     assert kwargs["keywords"] == ["porcupine"]
     assert kwargs["sensitivities"] == [0.3]
-    assert "access_key" not in kwargs
+    assert kwargs["access_key"] == "abc"
 
 
 def test_porcupine_kwargs_prefers_keyword_paths(tmp_path):
