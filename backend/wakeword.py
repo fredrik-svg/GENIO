@@ -6,8 +6,9 @@ import tempfile
 import threading
 import time
 import urllib.request
+from urllib.error import HTTPError
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 try:
     from openwakeword import Model
@@ -111,28 +112,63 @@ def _extract_missing_model_path(exc: Exception) -> Optional[Path]:
     return Path(match.group(1))
 
 
+MODEL_BASE_URLS: Tuple[str, ...] = (
+    "https://huggingface.co/dscripka/openwakeword/resolve/main/models/",
+    "https://raw.githubusercontent.com/dscripka/openwakeword/main/openwakeword/resources/models/",
+    "https://github.com/dscripka/openwakeword/raw/main/openwakeword/resources/models/",
+)
+
+
 def _try_recover_missing_model(target_path: Path) -> bool:
     """Försök ladda ner standardmodellen från openwakewords GitHub om den saknas."""
 
     if target_path.exists():
         return True
 
-    base_url = "https://github.com/dscripka/openwakeword/raw/main/openwakeword/resources/models/"
-    url = base_url + target_path.name
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        with urllib.request.urlopen(url, timeout=30) as response:  # nosec - kontrollerad URL
-            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                shutil.copyfileobj(response, tmp_file)
-                tmp_name = tmp_file.name
-    except Exception as download_error:  # pragma: no cover - nätverksfel bör endast loggas
+    download_error: Optional[Exception] = None
+    tmp_name: Optional[str] = None
+    for base_url in MODEL_BASE_URLS:
+        url = base_url + target_path.name
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "GENIO/1.0 wakeword recovery"})
+            with urllib.request.urlopen(request, timeout=30) as response:  # nosec - kontrollerad URL
+                with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                    shutil.copyfileobj(response, tmp_file)
+                    tmp_name = tmp_file.name
+        except HTTPError as http_error:
+            download_error = http_error
+            if http_error.code == 404:
+                logger.debug("Wake word model %s not found at %s", target_path.name, url)
+                continue
+            logger.warning(
+                "Wake word model %s could not be downloaded from %s: %s",
+                target_path.name,
+                url,
+                http_error,
+            )
+            return False
+        except Exception as generic_error:  # pragma: no cover - nätverksfel bör endast loggas
+            download_error = generic_error
+            logger.warning(
+                "Wake word model %s could not be downloaded from %s: %s",
+                target_path.name,
+                url,
+                generic_error,
+            )
+            return False
+        else:
+            break
+    else:
         logger.warning(
-            "Wake word model %s could not be downloaded from %s: %s",
+            "Wake word model %s could not be downloaded from any known source: %s",
             target_path.name,
-            url,
             download_error,
         )
+        return False
+
+    if tmp_name is None:  # pragma: no cover - defensive guard
         return False
 
     try:
