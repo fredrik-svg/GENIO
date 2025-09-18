@@ -1,5 +1,5 @@
 
-import asyncio, os, subprocess, base64
+import asyncio, os, subprocess, base64, logging
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -105,7 +105,8 @@ async def startup_event():
 
     global ww_listener
     ww_listener = WakeWordListener(on_detect=wrap, detection_threshold=0.6)
-    ww_listener.start()
+    if not ww_listener.start():
+        logging.warning("Wake word listener could not be started; voice activation disabled.")
 
 @app.on_event("shutdown")
 def shutdown_event():
