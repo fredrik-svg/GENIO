@@ -13,12 +13,28 @@
     .bubble { max-width: 800px; width: 95%; padding: 16px 18px; border-radius: 16px; line-height: 1.4; }
     .user { background: #12233f; }
     .assistant { background: #1a2f54; }
+    .ask-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
+    .ask-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
+    .ask-input::placeholder { color:rgba(238,242,255,0.6); }
+    .ask-submit { font-size:22px; padding:16px 24px; }
+    .btn:disabled, .ask-submit:disabled { opacity:0.5; cursor:not-allowed; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Pi5 Röstassistent 🇸🇪</h1>
     <button class="btn" id="talk">Tryck för att prata</button>
+    <form class="ask-form" id="ask-form">
+      <input
+        class="ask-input"
+        id="ask-input"
+        type="text"
+        name="question"
+        placeholder="Skriv din fråga här"
+        autocomplete="off"
+      />
+      <button class="btn ask-submit" type="submit" id="ask-submit">Skicka</button>
+    </form>
     <div class="status" id="status">Redo. Säg ”Hej kompis” eller tryck på knappen.</div>
     <div id="log"></div>
   </div>
@@ -27,6 +43,9 @@
     const statusEl = document.getElementById('status');
     const log = document.getElementById('log');
     const btn = document.getElementById('talk');
+    const askForm = document.getElementById('ask-form');
+    const askInput = document.getElementById('ask-input');
+    const askSubmit = document.getElementById('ask-submit');
 
     function addBubble(text, who){
       const div = document.createElement('div');
@@ -52,6 +71,42 @@
         statusEl.textContent = 'Fel: ' + e;
       }finally{
         btn.disabled = false;
+      }
+    });
+
+    askForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const question = askInput.value.trim();
+      if(!question){
+        askInput.focus();
+        return;
+      }
+
+      statusEl.textContent = 'Skickar fråga ...';
+      askSubmit.disabled = true;
+      askInput.disabled = true;
+
+      try{
+        const res = await fetch('/api/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question })
+        });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          addBubble('Du: ' + data.question, 'user');
+          addBubble('Assistent: ' + data.answer, 'assistant');
+          statusEl.textContent = 'Klar. Ställ en ny fråga eller prata med knappen.';
+          askInput.value = '';
+        }else{
+          statusEl.textContent = data.error || 'Kunde inte få svar just nu.';
+        }
+      }catch(e){
+        statusEl.textContent = 'Fel: ' + e;
+      }finally{
+        askSubmit.disabled = false;
+        askInput.disabled = false;
+        askInput.focus();
       }
     });
 

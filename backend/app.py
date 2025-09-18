@@ -1,7 +1,8 @@
 
-import asyncio, os, subprocess, base64, logging
+import asyncio, os, subprocess, logging
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 
 from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH
@@ -95,6 +96,27 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
 async def converse():
     data = await full_converse_flow(trigger="touch")
     return JSONResponse(data)
+
+
+class AskPayload(BaseModel):
+    question: str
+
+
+@app.post("/api/ask")
+async def ask(payload: AskPayload):
+    question = (payload.question or "").strip()
+    if not question:
+        return JSONResponse({"ok": False, "error": "Ingen fråga angavs."}, status_code=400)
+
+    await notify(f"status: Frågar OpenAI ...")
+    await notify(f"du: {question}")
+
+    reply = await chat_reply_sv(question)
+
+    await notify(f"assistent: {reply}")
+    await notify("status: Svar klart.")
+
+    return JSONResponse({"ok": True, "question": question, "answer": reply})
 
 # Start wakeword on startup
 ww_listener = None
