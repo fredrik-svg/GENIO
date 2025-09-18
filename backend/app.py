@@ -2,13 +2,14 @@
 import asyncio, io, os, subprocess, logging, shlex
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.staticfiles import StaticFiles
 
 from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH
 from .audio import record_until_silence, save_wav_mono16, play_wav_bytes
-from .openai_client import stt_transcribe_wav, chat_reply_sv, tts_speak_sv
+from .openai_client import stt_transcribe_wav, tts_speak_sv
 from .wakeword import WakeWordListener
+from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,14 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
     text = await stt_transcribe_wav(wav_bytes, language="sv")
     await notify(f"du: {text}")
 
-    await notify("status: Frågar OpenAI ...")
-    reply = await chat_reply_sv(text)
+    await notify("status: Söker i kunskapsbas ...")
+    rag = await rag_answer(text)
+    if rag.used_rag:
+        await notify("status: Hittade relevanta källor.")
+    else:
+        await notify("status: Inga träffar – använder generell kunskap.")
+    await notify(f"context: {rag.context_payload()}")
+    reply = rag.answer
     await notify(f"assistent: {reply}")
 
     await notify("status: Skapar tal ...")
@@ -107,7 +114,13 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
     if not played:
         await notify("status: Kunde inte spela upp ljudet.")
 
-    return {"ok": True, "question": text, "answer": reply}
+    return {
+        "ok": True,
+        "question": text,
+        "answer": reply,
+        "used_rag": rag.used_rag,
+        "contexts": rag.contexts_for_client(),
+    }
 
 @app.post("/api/converse")
 async def converse():
@@ -125,15 +138,55 @@ async def ask(payload: AskPayload):
     if not question:
         return JSONResponse({"ok": False, "error": "Ingen fråga angavs."}, status_code=400)
 
-    await notify(f"status: Frågar OpenAI ...")
+    await notify("status: Söker i kunskapsbas ...")
     await notify(f"du: {question}")
 
-    reply = await chat_reply_sv(question)
+    rag = await rag_answer(question)
+    if rag.used_rag:
+        await notify("status: Hittade relevanta källor.")
+    else:
+        await notify("status: Inga träffar – använder generell kunskap.")
+    await notify(f"context: {rag.context_payload()}")
+    reply = rag.answer
 
     await notify(f"assistent: {reply}")
     await notify("status: Svar klart.")
 
-    return JSONResponse({"ok": True, "question": question, "answer": reply})
+    return JSONResponse(
+        {
+            "ok": True,
+            "question": question,
+            "answer": reply,
+            "used_rag": rag.used_rag,
+            "contexts": rag.contexts_for_client(),
+        }
+    )
+
+
+class RAGIngestPayload(BaseModel):
+    sources: list[str] = Field(default_factory=list, description="Lista av URL:er eller filvägar som ska indexeras.")
+
+
+@app.post("/api/rag/ingest")
+async def rag_ingest(payload: RAGIngestPayload):
+    if not payload.sources:
+        return JSONResponse({"ok": False, "error": "Minst en källa krävs."}, status_code=400)
+    try:
+        result = await ingest_rag_sources(payload.sources)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:  # pragma: no cover - oväntat fel
+        logging.exception("RAG-ingestering misslyckades")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    await notify("status: Kunskapsbas uppdaterad.")
+    return JSONResponse({"ok": True, **result})
+
+
+@app.post("/api/rag/reset")
+async def rag_reset():
+    reset_rag_index()
+    await notify("status: Kunskapsbas rensad.")
+    return JSONResponse({"ok": True})
 
 # Start wakeword on startup
 ww_listener = None

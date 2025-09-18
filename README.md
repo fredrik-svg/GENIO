@@ -6,6 +6,7 @@ En lättviktig röstassistent för **Raspberry Pi 5** som pratar **svenska** och
 - **Wakeword**: Lokal "Hej kompis" via `openwakeword` (låg resursförbrukning).
 - **Naturligt tal**: TTS via OpenAI (t.ex. `gpt-4o-mini-tts`) – låter naturtroget och körs i molnet för att spara Pi-resurser.
 - **Minimal belastning** på Pi: STT/TTS och språkmodell körs i molnet.
+- **RAG-kunskapsbas**: Indexera webbsidor och dokument lokalt och återanvänd innehållet vid svar.
 
 > Testat på Raspberry Pi OS Bookworm (64-bit). Antag Python 3.11+.
 
@@ -67,9 +68,35 @@ sudo systemctl start pi5-assistant
 - **STT**: OpenAI Audio Transcriptions (`whisper-1` eller nyare).
 - **Chat**: `gpt-4o-mini` (snabbt/billigt) med svensk systemprompt.
 - **TTS**: OpenAI TTS (`gpt-4o-mini-tts`) → WAV → uppspelning med `aplay`.
+- **RAG**: Egen SQLite-baserad vektorstore + OpenAI embeddings (`text-embedding-3-small`).
 - **Wakeword**: `openwakeword` (lokalt, låg CPU).
 - **Wakeword-modeller**: `openwakeword` laddar automatiskt hem standardmodellerna vid första körningen (cache i `~/.cache/openwakeword`).
 - **Frontend**: Statisk HTML/JS med stor touchknapp, status och text.
+
+## Kunskapsbas (RAG)
+
+Assistenten kan indexera lokala dokument eller webbsidor för att svara baserat på eget material.
+
+1. **Inmatning** – Lägg till källor via webbgränssnittet (fältet "Klistra in URL...") eller REST-endpointen `/api/rag/ingest`.
+2. **Extraktion** – HTML och PDF/TXT konverteras till text, normaliseras och delas upp i bitar om cirka 400 ord.
+3. **Indexering** – Bitarna lagras i en lokal SQLite-databas (`RAG_DB_PATH`). Embeddings skapas via `EMBEDDING_MODEL`.
+4. **Sökning** – Varje fråga gör en semantisk sökning (`RAG_TOP_K` toppträffar). Endast träffar över `RAG_MIN_SCORE` skickas vidare.
+
+> **Obs!** PDF-stöd kräver att Python-paketet `pypdf` installeras. Utan det indexeras endast textbaserade filer.
+
+### API-exempel
+
+```bash
+# Lägg till en webbsida och ett lokalt dokument
+curl -X POST http://localhost:8080/api/rag/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"sources": ["https://exempel.se/faq", "/home/pi/docs/manual.pdf"]}'
+
+# Rensa hela indexet
+curl -X POST http://localhost:8080/api/rag/reset
+```
+
+När en fråga besvaras returneras `contexts` i HTTP-svaret och visas i webbgränssnittet under rubriken **Källor**. Om ingen relevant information hittas används generellt svar utan RAG.
 
 ## Konfig
 
@@ -83,6 +110,13 @@ Se `.env.sample`:
 - `MAX_RECORD_SECONDS=12`
 - `SILENCE_DURATION=1.0`
 - `ENERGY_THRESHOLD=0.015`
+- `EMBEDDING_MODEL=text-embedding-3-small`
+- `RAG_ENABLED=1`
+- `RAG_DB_PATH=./rag_store`
+- `RAG_TOP_K=4`
+- `RAG_MIN_SCORE=0.35`
+- `RAG_CHUNK_SIZE=400`
+- `RAG_CHUNK_OVERLAP=80`
 
 ## Kända tips
 

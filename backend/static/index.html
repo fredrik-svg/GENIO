@@ -13,11 +13,16 @@
     .bubble { max-width: 800px; width: 95%; padding: 16px 18px; border-radius: 16px; line-height: 1.4; }
     .user { background: #12233f; }
     .assistant { background: #1a2f54; }
-    .ask-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
-    .ask-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
+    .context { background: #132f3d; font-size: 16px; }
+    .context h3 { margin-top: 0; margin-bottom: 8px; font-size: 18px; }
+    .context ol { margin: 0; padding-left: 20px; }
+    .context li { margin-bottom: 6px; }
+    .ask-form, .rag-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
+    .ask-input, .rag-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
     .ask-input::placeholder { color:rgba(238,242,255,0.6); }
     .ask-submit { font-size:22px; padding:16px 24px; }
     .btn:disabled, .ask-submit:disabled { opacity:0.5; cursor:not-allowed; }
+    .rag-reset { background:#51222d; border-color:#823648; }
   </style>
 </head>
 <body>
@@ -35,6 +40,18 @@
       />
       <button class="btn ask-submit" type="submit" id="ask-submit">Skicka</button>
     </form>
+    <form class="rag-form" id="rag-form">
+      <input
+        class="rag-input"
+        id="rag-input"
+        type="text"
+        name="source"
+        placeholder="Klistra in URL eller filväg till kunskapskälla"
+        autocomplete="off"
+      />
+      <button class="btn" type="submit" id="rag-submit">Lägg till källa</button>
+      <button class="btn rag-reset" type="button" id="rag-reset">Rensa index</button>
+    </form>
     <div class="status" id="status">Redo. Säg ”Hej kompis” eller tryck på knappen.</div>
     <div id="log"></div>
   </div>
@@ -46,9 +63,14 @@
     const askForm = document.getElementById('ask-form');
     const askInput = document.getElementById('ask-input');
     const askSubmit = document.getElementById('ask-submit');
+    const ragForm = document.getElementById('rag-form');
+    const ragInput = document.getElementById('rag-input');
+    const ragSubmit = document.getElementById('rag-submit');
+    const ragReset = document.getElementById('rag-reset');
 
     let lastQuestion = '';
     let lastAnswer = '';
+    let lastContexts = [];
 
     function renderConversation(){
       log.innerHTML = '';
@@ -64,12 +86,30 @@
         answerDiv.textContent = 'Assistent: ' + lastAnswer;
         log.appendChild(answerDiv);
       }
+      if(lastContexts.length){
+        const contextDiv = document.createElement('div');
+        contextDiv.className = 'bubble context';
+        const title = document.createElement('h3');
+        title.textContent = 'Källor';
+        contextDiv.appendChild(title);
+        const list = document.createElement('ol');
+        lastContexts.forEach((ctx) => {
+          const item = document.createElement('li');
+          const label = ctx.title || ctx.source || 'Okänd källa';
+          const score = typeof ctx.score === 'number' ? ` (match: ${(ctx.score * 100).toFixed(1)}%)` : '';
+          item.innerHTML = `<strong>${label}</strong>${score}<br><small>${ctx.text}</small>`;
+          list.appendChild(item);
+        });
+        contextDiv.appendChild(list);
+        log.appendChild(contextDiv);
+      }
     }
 
     function setQuestion(questionText){
       lastQuestion = questionText || '';
       if(lastQuestion){
         lastAnswer = '';
+        lastContexts = [];
       }
       renderConversation();
     }
@@ -85,6 +125,11 @@
       renderConversation();
     }
 
+    function setContexts(contexts){
+      lastContexts = Array.isArray(contexts) ? contexts : [];
+      renderConversation();
+    }
+
     btn.addEventListener('click', async () => {
       statusEl.textContent = 'Lyssnar ...';
       btn.disabled = true;
@@ -93,6 +138,7 @@
         const data = await res.json();
         if(data.ok){
           setConversation(data.question, data.answer);
+          setContexts(data.contexts || []);
           statusEl.textContent = 'Klar. Tryck igen eller säg ”Hej kompis”.';
         }else{
           statusEl.textContent = 'Hörde inget – prova igen.';
@@ -125,6 +171,7 @@
         const data = await res.json();
         if(res.ok && data.ok){
           setConversation(data.question, data.answer);
+          setContexts(data.contexts || []);
           statusEl.textContent = 'Klar. Ställ en ny fråga eller prata med knappen.';
           askInput.value = '';
         }else{
@@ -139,6 +186,62 @@
       }
     });
 
+    ragForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const source = ragInput.value.trim();
+      if(!source){
+        ragInput.focus();
+        return;
+      }
+      statusEl.textContent = 'Lägger till källa i kunskapsbasen ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      try{
+        const res = await fetch('/api/rag/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sources: [source] })
+        });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          statusEl.textContent = `Indexerade ${data.chunks_added} textdelar.`;
+          ragInput.value = '';
+        }else{
+          statusEl.textContent = data.error || 'Kunde inte indexera källan.';
+        }
+      }catch(err){
+        statusEl.textContent = 'Fel: ' + err;
+      }finally{
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+        ragInput.focus();
+      }
+    });
+
+    ragReset.addEventListener('click', async () => {
+      if(!confirm('Är du säker på att du vill rensa kunskapsbasen?')){
+        return;
+      }
+      statusEl.textContent = 'Rensar kunskapsbas ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      try{
+        const res = await fetch('/api/rag/reset', { method: 'POST' });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          statusEl.textContent = 'Kunskapsbasen är rensad.';
+          setContexts([]);
+        }else{
+          statusEl.textContent = data.error || 'Kunde inte rensa kunskapsbasen.';
+        }
+      }catch(err){
+        statusEl.textContent = 'Fel: ' + err;
+      }finally{
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+      }
+    });
+
     // websocket status
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onmessage = (ev) => {
@@ -149,6 +252,13 @@
         setQuestion(msg.slice(3).trim());
       }else if(msg.startsWith('assistent:')){
         setAnswer(msg.slice(10).trim());
+      }else if(msg.startsWith('context:')){
+        try{
+          const payload = JSON.parse(msg.slice(8));
+          setContexts(payload);
+        }catch(err){
+          console.error('Kunde inte tolka context-meddelande', err);
+        }
       }else if(msg.startsWith('fel:')){
         statusEl.textContent = msg;
       }
