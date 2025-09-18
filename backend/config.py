@@ -1,7 +1,19 @@
-
 import os
-from dotenv import load_dotenv
-load_dotenv()
+from importlib import import_module, util
+
+
+def _load_dotenv() -> None:
+    """Load environment variables from a ``.env`` file if python-dotenv exists."""
+
+    spec = util.find_spec("dotenv")
+    if spec is None:
+        return
+    module = import_module("dotenv")
+    if hasattr(module, "load_dotenv"):
+        module.load_dotenv()
+
+
+_load_dotenv()
 
 def env(key: str, default: str | None = None):
     return os.getenv(key, default)
