@@ -6,7 +6,6 @@ sounddevice==0.4.7
 numpy==1.26.4
 webrtcvad==2.0.10
 openwakeword==0.6.0
-openwakeword-models==0.6.0
 pydantic==2.8.2
 httpx==0.27.0
 starlette==0.37.2
