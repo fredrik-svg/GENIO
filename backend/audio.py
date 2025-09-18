@@ -1,8 +1,11 @@
 
+import contextlib
+import io
 import logging
 import math
 import queue
 import time
+import wave
 
 import numpy as np
 import sounddevice as sd
@@ -162,7 +165,7 @@ def record_until_silence() -> np.ndarray:
 
 def save_wav_mono16(path: str, audio: np.ndarray, sample_rate: int = SAMPLE_RATE):
     """Sparar float32 [-1..1] som 16-bit PCM WAV."""
-    import wave, struct
+
     wav = wave.open(path, 'wb')
     wav.setnchannels(1)
     wav.setsampwidth(2)
@@ -171,3 +174,36 @@ def save_wav_mono16(path: str, audio: np.ndarray, sample_rate: int = SAMPLE_RATE
     ints = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
     wav.writeframes(ints.tobytes())
     wav.close()
+
+
+def play_wav_bytes(data: bytes) -> None:
+    """Spela upp WAV-data med sounddevice som blockar tills färdigt."""
+
+    if not data:
+        return
+
+    with contextlib.closing(wave.open(io.BytesIO(data), 'rb')) as wav_file:
+        sample_rate = wav_file.getframerate()
+        channels = wav_file.getnchannels()
+        sampwidth = wav_file.getsampwidth()
+        frames = wav_file.getnframes()
+        raw = wav_file.readframes(frames)
+
+    if not raw:
+        return
+
+    if sampwidth == 1:
+        audio = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+        audio = (audio - 128.0) / 128.0
+    elif sampwidth == 2:
+        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sampwidth == 4:
+        audio = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported WAV sample width: {sampwidth}")
+
+    if channels > 1:
+        audio = np.reshape(audio, (-1, channels))
+
+    sd.play(audio, samplerate=sample_rate)
+    sd.wait()
