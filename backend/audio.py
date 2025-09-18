@@ -24,6 +24,38 @@ logger = logging.getLogger(__name__)
 _COMMON_SAMPLE_RATES = (48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000)
 
 
+def _detect_input_device(device):
+    """Return ``(has_device, message)`` for *device*.
+
+    The first element indicates whether an audio input device is available.
+    When ``has_device`` is ``False`` the second element contains a human
+    readable message describing the reason, which can be logged by the caller.
+    """
+
+    try:
+        if device not in (None, ""):
+            sd.query_devices(device, "input")
+            return True, None
+    except Exception as exc:  # pragma: no cover - defensive, exercised via tests
+        return False, f"Configured audio input device {device!r} is unavailable: {exc}"
+
+    try:
+        devices = sd.query_devices()
+    except Exception as exc:  # pragma: no cover - defensive
+        return False, f"Unable to query audio input devices: {exc}"
+
+    for info in devices:
+        channels = None
+        if isinstance(info, dict):
+            channels = info.get("max_input_channels")
+        else:
+            channels = getattr(info, "max_input_channels", None)
+        if isinstance(channels, (int, float)) and channels > 0:
+            return True, None
+
+    return False, "No audio input devices detected."
+
+
 def _gather_fallback_sample_rates(device, excluded_rates):
     """Return an ordered list of candidate sample rates excluding *excluded_rates*."""
 
@@ -103,6 +135,14 @@ def record_until_silence() -> np.ndarray:
         q.put(indata.copy())
 
     device = INPUT_DEVICE if INPUT_DEVICE else None
+
+    has_device, message = _detect_input_device(device)
+    if not has_device:
+        if message:
+            logger.warning("%s Returning silence.", message)
+        else:  # pragma: no cover - defensive
+            logger.warning("No usable audio input device detected; returning silence.")
+        return np.zeros((0,), dtype=np.float32)
 
     def open_stream(sample_rate: int) -> sd.InputStream:
         return sd.InputStream(
