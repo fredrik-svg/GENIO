@@ -13,8 +13,17 @@ class DummyPortAudioError(Exception):
     pass
 
 
-def _make_dummy_sd(query_result=None, query_exception=None, default_samplerate=None):
-    def query_devices(device, kind):
+def _make_dummy_sd(
+    query_result=None,
+    query_exception=None,
+    default_samplerate=None,
+    device_list=None,
+):
+    def query_devices(device=None, kind=None):
+        if device is None and kind is None:
+            if query_exception is not None:
+                raise query_exception
+            return list(device_list or [])
         if query_exception is not None:
             raise query_exception
         assert kind == "input"
@@ -108,13 +117,19 @@ def test_record_until_silence_returns_silence_when_input_unavailable(monkeypatch
     class DummyStreamError(Exception):
         pass
 
-    def make_dummy_input_stream(**_kwargs):
-        raise DummyStreamError("device unavailable")
+    def query_devices(device=None, kind=None):
+        if device is None and kind is None:
+            return []
+        assert kind == "input"
+        return {}
+
+    def make_dummy_input_stream(**_kwargs):  # pragma: no cover - sanity check
+        raise AssertionError("InputStream should not be created when no devices are present")
 
     dummy_sd = SimpleNamespace(
         PortAudioError=DummyStreamError,
         InputStream=lambda *args, **kwargs: make_dummy_input_stream(**kwargs),
-        query_devices=lambda device, kind: {},
+        query_devices=query_devices,
         default=SimpleNamespace(samplerate=None),
     )
 
@@ -132,7 +147,7 @@ def test_record_until_silence_returns_silence_when_input_unavailable(monkeypatch
         if record.name == audio.__name__
     )
     assert any(
-        "Could not open any audio input stream" in record.getMessage()
+        "No audio input devices detected." in record.getMessage()
         for record in caplog.records
         if record.name == audio.__name__
     )
