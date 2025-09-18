@@ -1,5 +1,5 @@
 
-import asyncio, os, subprocess, logging, shlex
+import asyncio, io, os, subprocess, logging, shlex
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -58,19 +58,9 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
         return {"ok": False, "error": "no_audio"}
 
     await notify("status: Transkriberar ...")
-    import io
     buf = io.BytesIO()
-    save_wav_mono16(buf, audio)  # tweak save_wav to accept file-like
-    # fix: rewrite save_wav to accept path only; so write to tmp
-    # Workaround: write to /tmp/audio.wav
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    tmp_path = tmp.name
-    tmp.close()
-    save_wav_mono16(tmp_path, audio)
-    with open(tmp_path, "rb") as f:
-        wav_bytes = f.read()
-    os.unlink(tmp_path)
+    save_wav_mono16(buf, audio)
+    wav_bytes = buf.getvalue()
 
     text = await stt_transcribe_wav(wav_bytes, language="sv")
     await notify(f"du: {text}")
