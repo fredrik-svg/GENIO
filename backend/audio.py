@@ -1,16 +1,85 @@
 
 import logging
+import math
 import queue
 import time
-import math
 
 import numpy as np
 import sounddevice as sd
 
-from .config import SAMPLE_RATE, MAX_RECORD_SECONDS, SILENCE_DURATION, ENERGY_THRESHOLD, INPUT_DEVICE
+from .config import (
+    ENERGY_THRESHOLD,
+    INPUT_DEVICE,
+    MAX_RECORD_SECONDS,
+    SAMPLE_RATE,
+    SILENCE_DURATION,
+)
 
 
 logger = logging.getLogger(__name__)
+
+_COMMON_SAMPLE_RATES = (48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000)
+
+
+def _gather_fallback_sample_rates(device, excluded_rates):
+    """Return an ordered list of candidate sample rates excluding *excluded_rates*."""
+
+    candidates = []
+    seen = set(excluded_rates)
+
+    def add(rate):
+        if rate is None:
+            return
+        try:
+            numeric = float(rate)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(numeric) or numeric <= 0:
+            return
+        rounded = int(round(numeric))
+        if rounded in seen:
+            return
+        seen.add(rounded)
+        candidates.append(rounded)
+
+    try:
+        device_info = sd.query_devices(device, "input")
+    except Exception as info_exc:  # pragma: no cover - defensive
+        logger.error("Could not query input device info: %s", info_exc)
+    else:
+        add(device_info.get("default_samplerate"))
+
+    default_samplerate = getattr(getattr(sd, "default", None), "samplerate", None)
+    add(default_samplerate)
+
+    for rate in _COMMON_SAMPLE_RATES:
+        add(rate)
+
+    return candidates
+
+
+def _open_stream_with_fallback(open_stream, device, excluded_rates):
+    """Try to open *open_stream* with fallback sample rates.
+
+    Returns a tuple ``(stream, sample_rate)``.
+    """
+
+    last_error = None
+    for candidate_rate in _gather_fallback_sample_rates(device, excluded_rates):
+        try:
+            stream = open_stream(candidate_rate)
+        except sd.PortAudioError as exc:
+            last_error = exc
+            logger.warning(
+                "Failed to open input stream at %d Hz: %s", candidate_rate, exc
+            )
+            continue
+        logger.info("Recording using fallback sample rate %d Hz", candidate_rate)
+        return stream, candidate_rate
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unable to open audio input stream")
 
 def rms_energy(audio: np.ndarray) -> float:
     """Returnera RMS-energi (0..1 ungefär)."""
@@ -47,25 +116,9 @@ def record_until_silence() -> np.ndarray:
         stream = open_stream(SAMPLE_RATE)
     except sd.PortAudioError as exc:
         logger.warning("Failed to open input stream at %d Hz: %s", SAMPLE_RATE, exc)
-        fallback_rate = None
-        try:
-            device_info = sd.query_devices(device, "input")
-            fallback_rate = device_info.get("default_samplerate")
-        except Exception as info_exc:  # pragma: no cover - defensive
-            logger.error("Could not query input device info: %s", info_exc)
-        if fallback_rate and math.isfinite(fallback_rate) and fallback_rate > 0:
-            effective_sample_rate = int(round(fallback_rate))
-            logger.info("Retrying recording with fallback sample rate %d Hz", effective_sample_rate)
-            try:
-                stream = open_stream(effective_sample_rate)
-            except sd.PortAudioError:
-                logger.error(
-                    "Fallback sample rate %d Hz also failed; giving up.",
-                    effective_sample_rate,
-                )
-                raise
-        else:
-            raise
+        stream, effective_sample_rate = _open_stream_with_fallback(
+            open_stream, device, {SAMPLE_RATE}
+        )
     audio_chunks = []
     with stream:
         start = time.time()
