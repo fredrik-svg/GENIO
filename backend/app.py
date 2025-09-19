@@ -78,7 +78,12 @@ async def full_converse_flow(trigger: str = "touch", *, suspend_wakeword: bool =
         wav_bytes = buf.getvalue()
 
         text = await stt_transcribe_wav(wav_bytes, language="sv")
+        text = (text or "").strip()
         await notify(f"du: {text}")
+
+        if not text:
+            await notify("status: Hörde inget – försök igen.")
+            return {"ok": False, "error": "empty_transcription"}
 
         await notify("status: Söker i kunskapsbas ...")
         rag = await rag_answer(text)
