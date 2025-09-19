@@ -1,10 +1,10 @@
 
-import contextlib
 import io
 import logging
 import math
 import os
 import queue
+import struct
 import time
 import wave
 
@@ -61,6 +61,12 @@ from .config import (
 logger = logging.getLogger(__name__)
 
 _COMMON_SAMPLE_RATES = (48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000)
+
+_WAVE_FORMAT_PCM = 0x0001
+_WAVE_FORMAT_IEEE_FLOAT = 0x0003
+_WAVE_FORMAT_EXTENSIBLE = 0xFFFE
+_KSDATAFORMAT_SUBTYPE_PCM = b"\x01\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
+_KSDATAFORMAT_SUBTYPE_IEEE_FLOAT = b"\x03\x00\x00\x00\x00\x00\x10\x00\x80\x00\x00\xaa\x00\x38\x9b\x71"
 
 
 def _detect_input_device(device):
@@ -159,6 +165,151 @@ def _open_stream_with_fallback(open_stream, device, excluded_rates):
     if last_error is not None:
         raise last_error
     raise RuntimeError("Unable to open audio input stream")
+
+
+def _read_chunks(buffer: io.BytesIO):
+    while True:
+        header = buffer.read(8)
+        if len(header) < 8:
+            return
+        chunk_id, chunk_size = struct.unpack("<4sI", header)
+        data = buffer.read(chunk_size)
+        if len(data) < chunk_size:
+            raise ValueError("Truncated WAV chunk")
+        if chunk_size % 2 == 1:
+            buffer.seek(1, io.SEEK_CUR)
+        yield chunk_id, data
+
+
+def _parse_wav_metadata(data: bytes):
+    stream = io.BytesIO(data)
+    if stream.read(4) != b"RIFF":
+        raise ValueError("Not a RIFF container")
+    size_bytes = stream.read(4)
+    if len(size_bytes) < 4:
+        raise ValueError("Truncated RIFF header")
+    if stream.read(4) != b"WAVE":
+        raise ValueError("Not a WAVE file")
+
+    fmt_chunk = None
+    data_chunk = None
+    for chunk_id, chunk_data in _read_chunks(stream):
+        if chunk_id == b"fmt " and fmt_chunk is None:
+            fmt_chunk = chunk_data
+        elif chunk_id == b"data" and data_chunk is None:
+            data_chunk = chunk_data
+        if fmt_chunk is not None and data_chunk is not None:
+            break
+
+    if fmt_chunk is None or data_chunk is None:
+        raise ValueError("Missing fmt or data chunk")
+    if len(fmt_chunk) < 16:
+        raise ValueError("Invalid fmt chunk")
+
+    format_tag, channels, sample_rate, byte_rate, block_align, bits_per_sample = struct.unpack(
+        "<HHIIHH", fmt_chunk[:16]
+    )
+    extra = fmt_chunk[16:]
+
+    if format_tag == _WAVE_FORMAT_EXTENSIBLE and len(extra) >= 2:
+        cb_size = struct.unpack("<H", extra[:2])[0]
+        extension = extra[2 : 2 + cb_size]
+        if len(extension) >= 22:
+            subformat = extension[6:22]
+            if subformat == _KSDATAFORMAT_SUBTYPE_PCM:
+                format_tag = _WAVE_FORMAT_PCM
+            elif subformat == _KSDATAFORMAT_SUBTYPE_IEEE_FLOAT:
+                format_tag = _WAVE_FORMAT_IEEE_FLOAT
+
+    return {
+        "format_tag": format_tag,
+        "channels": channels,
+        "sample_rate": sample_rate,
+        "bits_per_sample": bits_per_sample,
+        "block_align": block_align,
+        "data": data_chunk,
+    }
+
+
+def _pcm_bytes_to_float(raw: bytes, channels: int, bits_per_sample: int) -> np.ndarray:
+    if channels <= 0:
+        raise ValueError("Invalid channel count")
+    if bits_per_sample <= 0:
+        raise ValueError("Invalid bits per sample")
+
+    sample_width = (bits_per_sample + 7) // 8
+    if sample_width == 1:
+        audio = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+        audio = (audio - 128.0) / 128.0
+    elif sample_width == 2:
+        audio = np.frombuffer(raw, dtype="<i2").astype(np.float32)
+        audio = audio / 32768.0
+    elif sample_width == 3:
+        as_uint8 = np.frombuffer(raw, dtype=np.uint8)
+        trim = as_uint8.size - (as_uint8.size % 3)
+        if trim != as_uint8.size:
+            as_uint8 = as_uint8[:trim]
+        reshaped = as_uint8.reshape(-1, 3)
+        ints = (
+            reshaped[:, 0].astype(np.int32)
+            | (reshaped[:, 1].astype(np.int32) << 8)
+            | (reshaped[:, 2].astype(np.int32) << 16)
+        )
+        mask = (1 << bits_per_sample) - 1
+        sign_bit = 1 << (bits_per_sample - 1)
+        ints = ints & mask
+        ints = (ints ^ sign_bit) - sign_bit
+        audio = ints.astype(np.float32) / float(sign_bit)
+    elif sample_width == 4:
+        audio = np.frombuffer(raw, dtype="<i4").astype(np.float32)
+        audio = audio / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported PCM sample width: {sample_width}")
+
+    if channels > 1:
+        frame_count = audio.size // channels
+        audio = audio[: frame_count * channels]
+        audio = audio.reshape(-1, channels)
+
+    return audio.astype(np.float32, copy=False)
+
+
+def _decode_wav_audio(data: bytes) -> tuple[np.ndarray, int]:
+    metadata = _parse_wav_metadata(data)
+    channels = metadata["channels"]
+    sample_rate = metadata["sample_rate"]
+    bits_per_sample = metadata["bits_per_sample"]
+    block_align = metadata["block_align"] or channels * ((bits_per_sample + 7) // 8)
+    raw = metadata["data"]
+
+    if channels <= 0 or sample_rate <= 0:
+        raise ValueError("Invalid WAV metadata")
+    if not raw:
+        return np.zeros((0,), dtype=np.float32), sample_rate
+
+    frame_size = block_align or channels * ((bits_per_sample + 7) // 8)
+    if frame_size <= 0:
+        raise ValueError("Invalid frame size")
+    frame_count = len(raw) // frame_size
+    raw = raw[: frame_count * frame_size]
+
+    format_tag = metadata["format_tag"]
+    if format_tag == _WAVE_FORMAT_PCM:
+        audio = _pcm_bytes_to_float(raw, channels, bits_per_sample)
+    elif format_tag == _WAVE_FORMAT_IEEE_FLOAT:
+        sample_width = (bits_per_sample + 7) // 8
+        if sample_width != 4:
+            raise ValueError("Unsupported float sample width")
+        audio = np.frombuffer(raw, dtype="<f4").astype(np.float32, copy=False)
+        if channels > 1:
+            frame_count = audio.size // channels
+            audio = audio[: frame_count * channels]
+            audio = audio.reshape(-1, channels)
+    else:
+        raise ValueError(f"Unsupported WAV format tag: {format_tag}")
+
+    return audio.astype(np.float32, copy=False), sample_rate
+
 
 def rms_energy(audio: np.ndarray) -> float:
     """Returnera RMS-energi (0..1 ungefär)."""
@@ -345,28 +496,9 @@ def play_wav_bytes(data: bytes) -> None:
     if not data:
         return
 
-    with contextlib.closing(wave.open(io.BytesIO(data), 'rb')) as wav_file:
-        sample_rate = wav_file.getframerate()
-        channels = wav_file.getnchannels()
-        sampwidth = wav_file.getsampwidth()
-        frames = wav_file.getnframes()
-        raw = wav_file.readframes(frames)
-
-    if not raw:
+    audio, sample_rate = _decode_wav_audio(data)
+    if audio.size == 0:
         return
-
-    if sampwidth == 1:
-        audio = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
-        audio = (audio - 128.0) / 128.0
-    elif sampwidth == 2:
-        audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    elif sampwidth == 4:
-        audio = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
-    else:
-        raise ValueError(f"Unsupported WAV sample width: {sampwidth}")
-
-    if channels > 1:
-        audio = np.reshape(audio, (-1, channels))
 
     error = _sounddevice_error()
     if error is not None:
