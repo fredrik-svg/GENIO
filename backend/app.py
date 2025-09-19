@@ -25,6 +25,11 @@ app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static"
 async def index() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "index.html"))
 
+
+@app.get("/rag", response_class=HTMLResponse)
+async def rag_page() -> FileResponse:
+    return FileResponse(os.path.join(static_dir, "rag.html"))
+
 # simple status broadcast (optional)
 clients = set()
 

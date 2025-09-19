@@ -7,8 +7,10 @@
   <style>
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#0b1220; color:#eef2ff; }
     .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; padding:24px; }
-    .btn { font-size:28px; padding:24px 32px; border-radius:20px; background:#1f2a44; border:2px solid #3c4a6b; color:#fff; cursor:pointer; }
+    .actions { display:flex; flex-wrap:wrap; gap:16px; justify-content:center; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; font-size:28px; padding:24px 32px; border-radius:20px; background:#1f2a44; border:2px solid #3c4a6b; color:#fff; cursor:pointer; text-decoration:none; }
     .btn:active { transform: scale(0.98); }
+    .btn.secondary { background:#13233d; border-color:#2a3b5f; font-size:20px; padding:16px 24px; }
     .status { font-size:18px; opacity:0.9; }
     .bubble { max-width: 800px; width: 95%; padding: 16px 18px; border-radius: 16px; line-height: 1.4; }
     .user { background: #12233f; }
@@ -17,18 +19,20 @@
     .context h3 { margin-top: 0; margin-bottom: 8px; font-size: 18px; }
     .context ol { margin: 0; padding-left: 20px; }
     .context li { margin-bottom: 6px; }
-    .ask-form, .rag-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
-    .ask-input, .rag-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
+    .ask-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
+    .ask-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
     .ask-input::placeholder { color:rgba(238,242,255,0.6); }
     .ask-submit { font-size:22px; padding:16px 24px; }
     .btn:disabled, .ask-submit:disabled { opacity:0.5; cursor:not-allowed; }
-    .rag-reset { background:#51222d; border-color:#823648; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Pi5 Röstassistent 🇸🇪</h1>
-    <button class="btn" id="talk">Tryck för att prata</button>
+    <div class="actions">
+      <button class="btn" id="talk">Tryck för att prata</button>
+      <a class="btn secondary" href="/rag">Hantera kunskapsbas</a>
+    </div>
     <form class="ask-form" id="ask-form">
       <input
         class="ask-input"
@@ -39,18 +43,6 @@
         autocomplete="off"
       />
       <button class="btn ask-submit" type="submit" id="ask-submit">Skicka</button>
-    </form>
-    <form class="rag-form" id="rag-form">
-      <input
-        class="rag-input"
-        id="rag-input"
-        type="text"
-        name="source"
-        placeholder="Klistra in URL eller filväg till kunskapskälla"
-        autocomplete="off"
-      />
-      <button class="btn" type="submit" id="rag-submit">Lägg till källa</button>
-      <button class="btn rag-reset" type="button" id="rag-reset">Rensa index</button>
     </form>
     <div class="status" id="status">Redo. Säg ”Hej kompis” eller tryck på knappen.</div>
     <div id="log"></div>
@@ -63,11 +55,6 @@
     const askForm = document.getElementById('ask-form');
     const askInput = document.getElementById('ask-input');
     const askSubmit = document.getElementById('ask-submit');
-    const ragForm = document.getElementById('rag-form');
-    const ragInput = document.getElementById('rag-input');
-    const ragSubmit = document.getElementById('rag-submit');
-    const ragReset = document.getElementById('rag-reset');
-
     let lastQuestion = '';
     let lastAnswer = '';
     let lastContexts = [];
@@ -183,62 +170,6 @@
         askSubmit.disabled = false;
         askInput.disabled = false;
         askInput.focus();
-      }
-    });
-
-    ragForm.addEventListener('submit', async (ev) => {
-      ev.preventDefault();
-      const source = ragInput.value.trim();
-      if(!source){
-        ragInput.focus();
-        return;
-      }
-      statusEl.textContent = 'Lägger till källa i kunskapsbasen ...';
-      ragSubmit.disabled = true;
-      ragReset.disabled = true;
-      try{
-        const res = await fetch('/api/rag/ingest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sources: [source] })
-        });
-        const data = await res.json();
-        if(res.ok && data.ok){
-          statusEl.textContent = `Indexerade ${data.chunks_added} textdelar.`;
-          ragInput.value = '';
-        }else{
-          statusEl.textContent = data.error || 'Kunde inte indexera källan.';
-        }
-      }catch(err){
-        statusEl.textContent = 'Fel: ' + err;
-      }finally{
-        ragSubmit.disabled = false;
-        ragReset.disabled = false;
-        ragInput.focus();
-      }
-    });
-
-    ragReset.addEventListener('click', async () => {
-      if(!confirm('Är du säker på att du vill rensa kunskapsbasen?')){
-        return;
-      }
-      statusEl.textContent = 'Rensar kunskapsbas ...';
-      ragSubmit.disabled = true;
-      ragReset.disabled = true;
-      try{
-        const res = await fetch('/api/rag/reset', { method: 'POST' });
-        const data = await res.json();
-        if(res.ok && data.ok){
-          statusEl.textContent = 'Kunskapsbasen är rensad.';
-          setContexts([]);
-        }else{
-          statusEl.textContent = data.error || 'Kunde inte rensa kunskapsbasen.';
-        }
-      }catch(err){
-        statusEl.textContent = 'Fel: ' + err;
-      }finally{
-        ragSubmit.disabled = false;
-        ragReset.disabled = false;
       }
     });
 

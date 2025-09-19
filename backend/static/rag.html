@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hantera kunskapsbas – Pi5 Röstassistent</title>
+  <style>
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#0b1220; color:#eef2ff; }
+    a { color:inherit; }
+    .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center; gap:24px; padding:32px 24px 48px; max-width:900px; margin:0 auto; }
+    .wrap header { width:100%; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
+    .title { font-size:32px; margin:0; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; font-size:20px; padding:14px 22px; border-radius:16px; background:#1f2a44; border:2px solid #3c4a6b; color:#fff; cursor:pointer; text-decoration:none; transition:transform 0.1s ease; }
+    .btn:active { transform: scale(0.98); }
+    .btn.danger { background:#51222d; border-color:#823648; }
+    .btn.secondary { background:#13233d; border-color:#2a3b5f; }
+    .card { width:100%; background:#101d34; border:1px solid #253659; border-radius:20px; padding:24px; box-shadow:0 20px 40px rgba(0,0,0,0.15); }
+    .card h2 { margin-top:0; }
+    .rag-form { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    .rag-input { flex:1 1 260px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:18px; }
+    .rag-input::placeholder { color:rgba(238,242,255,0.6); }
+    .helper { margin:0; opacity:0.8; font-size:16px; }
+    .status { font-size:18px; opacity:0.9; text-align:center; }
+    .log { width:100%; display:flex; flex-direction:column; gap:12px; }
+    .log-entry { padding:16px 18px; border-radius:16px; background:#132f3d; border:1px solid #214a61; line-height:1.4; font-size:16px; }
+    .log-entry.success { border-color:#1b7750; background:#12392d; }
+    .log-entry.error { border-color:#7a2c2c; background:#3f1b22; }
+    .log-entry small { display:block; margin-top:8px; opacity:0.75; }
+    @media (max-width:640px){
+      .wrap { padding:24px 16px 40px; }
+      .btn { width:100%; }
+      .wrap header { justify-content:center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 class="title">Hantera kunskapsbas</h1>
+      <a class="btn secondary" href="/">⬅ Tillbaka till assistenten</a>
+    </header>
+
+    <p class="helper">Lägg till länkar eller filvägar som ska indexeras för RAG-sökningar. Du kan ange flera källor separerade med radbrytningar.</p>
+
+    <div class="card">
+      <h2>Lägg till källa</h2>
+      <form class="rag-form" id="rag-form">
+        <textarea
+          class="rag-input"
+          id="rag-input"
+          name="sources"
+          rows="4"
+          placeholder="https://exempel.se/dokument.pdf\n/home/pi/dokument.txt"
+        ></textarea>
+        <button class="btn" type="submit" id="rag-submit">Indexera källor</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Rensa index</h2>
+      <p class="helper">Tar bort alla indexerade dokument från kunskapsbasen.</p>
+      <button class="btn danger" type="button" id="rag-reset">Rensa kunskapsbasen</button>
+    </div>
+
+    <div class="status" id="status">Redo.</div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <script>
+    const ragForm = document.getElementById('rag-form');
+    const ragInput = document.getElementById('rag-input');
+    const ragSubmit = document.getElementById('rag-submit');
+    const ragReset = document.getElementById('rag-reset');
+    const statusEl = document.getElementById('status');
+    const log = document.getElementById('log');
+
+    function pushLog(message, type = 'info', meta = ''){
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`.trim();
+      entry.textContent = message;
+      if(meta){
+        const small = document.createElement('small');
+        small.textContent = meta;
+        entry.appendChild(small);
+      }
+      log.prepend(entry);
+    }
+
+    ragForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const raw = ragInput.value.trim();
+      if(!raw){
+        ragInput.focus();
+        return;
+      }
+
+      const sources = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+      if(!sources.length){
+        ragInput.focus();
+        return;
+      }
+
+      statusEl.textContent = 'Indexerar källor ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      ragInput.disabled = true;
+      try {
+        const res = await fetch('/api/rag/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sources })
+        });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          const added = typeof data.chunks_added === 'number' ? data.chunks_added : 'okänt antal';
+          statusEl.textContent = `Indexerade ${added} textdelar.`;
+          pushLog(`Källa${sources.length > 1 ? 'r' : ''} indexerade.`, 'success', sources.join('\n'));
+          ragInput.value = '';
+        }else{
+          const error = data.error || 'Kunde inte indexera källorna.';
+          statusEl.textContent = error;
+          pushLog(error, 'error', sources.join('\n'));
+        }
+      }catch(err){
+        statusEl.textContent = 'Fel: ' + err;
+        pushLog('Ett fel inträffade vid indexering.', 'error');
+      }finally{
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+        ragInput.disabled = false;
+        ragInput.focus();
+      }
+    });
+
+    ragReset.addEventListener('click', async () => {
+      if(!confirm('Är du säker på att du vill rensa kunskapsbasen?')){
+        return;
+      }
+      statusEl.textContent = 'Rensar kunskapsbas ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      ragInput.disabled = true;
+      try {
+        const res = await fetch('/api/rag/reset', { method: 'POST' });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          statusEl.textContent = 'Kunskapsbasen är rensad.';
+          pushLog('Kunskapsbasen rensades.', 'success');
+        }else{
+          const error = data.error || 'Kunde inte rensa kunskapsbasen.';
+          statusEl.textContent = error;
+          pushLog(error, 'error');
+        }
+      }catch(err){
+        statusEl.textContent = 'Fel: ' + err;
+        pushLog('Ett fel inträffade vid rensning.', 'error');
+      }finally{
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+        ragInput.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
