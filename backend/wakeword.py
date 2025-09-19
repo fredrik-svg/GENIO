@@ -75,18 +75,64 @@ class WakeWordListener:
             logger.info("Wake word listener not started because no detector is available.")
             return False
 
-        if self._thread and self._thread.is_alive():
+        if self.is_running():
             return True
 
-        self._stop.clear()
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return True
 
     def stop(self):
+        if not self.is_running():
+            return
+
+        thread = self._thread
+        if thread is None:
+            return
+
         self._stop.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=0.1)
+        if threading.get_ident() != thread.ident:
+            thread.join(timeout=0.5)
+        self._thread = None
+
+    def is_running(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def suspend(self, timeout: float = 1.0) -> bool:
+        """Temporarily stop listening so that the microphone can be reused."""
+
+        if not self.is_running():
+            return False
+
+        thread = self._thread
+        if thread is None:
+            return False
+
+        if threading.get_ident() == thread.ident:
+            logger.debug(
+                "Refusing to suspend wake word listener from within its own thread.",
+            )
+            return False
+
+        self._stop.set()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            logger.warning(
+                "Wake word listener thread did not stop within %.1fs when suspending.",
+                timeout,
+            )
+            return False
+
+        self._thread = None
+        self._stop = threading.Event()
+        return True
+
+    def resume(self) -> bool:
+        """Restart the listener after :meth:`suspend`."""
+
+        return self.start()
 
     def _run(self):
         if self._detector is None:
@@ -100,21 +146,81 @@ class WakeWordListener:
         samplerate = getattr(self._detector, "sample_rate", 16000)
         blocksize = getattr(self._detector, "frame_length", 512)
 
-        with sd.InputStream(
-            channels=1,
-            samplerate=samplerate,
-            blocksize=blocksize,
-            dtype="float32",
-        ) as stream:
+        cooldown = getattr(self._detector, "cooldown", 2.0)
+
+        def open_stream():
+            stream = sd.InputStream(
+                channels=1,
+                samplerate=samplerate,
+                blocksize=blocksize,
+                dtype="float32",
+            )
+            stream.start()
+            return stream
+
+        stream = None
+        try:
+            try:
+                stream = open_stream()
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logger.error("Could not start wake word audio stream: %s", exc)
+                return
+
             while not self._stop.is_set():
-                audio_block, _ = stream.read(blocksize)
+                try:
+                    audio_block, _ = stream.read(blocksize)
+                except Exception as exc:  # pragma: no cover - defensive
+                    if self._stop.is_set():
+                        break
+                    logger.error("Wake word audio stream failed: %s", exc)
+                    break
+
                 if np is not None:
                     y = audio_block[:, 0].astype(np.float32, copy=False)
                 else:  # pragma: no cover - numpy saknas endast i testmiljöer
                     y = [float(sample[0]) for sample in audio_block]
-                if self._detector.process(y):
+
+                if not self._detector.process(y):
+                    continue
+
+                try:
+                    stream.stop()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    logger.debug("Failed to stop wake word stream", exc_info=True)
+                try:
+                    stream.close()
+                except Exception:  # pragma: no cover - defensive cleanup
+                    logger.debug("Failed to close wake word stream", exc_info=True)
+                stream = None
+
+                try:
                     self.on_detect()
-                    time.sleep(getattr(self._detector, "cooldown", 2.0))
+                except Exception:  # pragma: no cover - defensive guard
+                    logger.exception("Wake word callback raised an exception")
+
+                if self._stop.is_set():
+                    break
+
+                time.sleep(cooldown)
+
+                if self._stop.is_set():
+                    break
+
+                try:
+                    stream = open_stream()
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    logger.error("Could not restart wake word audio stream: %s", exc)
+                    break
+        finally:
+            if stream is not None:
+                try:
+                    stream.stop()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    pass
+                try:
+                    stream.close()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    pass
 
     @property
     def detector_name(self) -> str:

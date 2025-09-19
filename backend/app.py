@@ -51,80 +51,101 @@ async def notify(msg: str):
     for d in dead:
         clients.discard(d)
 
-async def full_converse_flow(trigger: str = "touch") -> dict:
-    await notify(f"status: Lyssnar ({trigger}) ...")
-    audio = record_until_silence()
-    if audio.size == 0:
-        await notify("status: Hörde inget – försök igen.")
-        return {"ok": False, "error": "no_audio"}
+async def full_converse_flow(trigger: str = "touch", *, suspend_wakeword: bool = True) -> dict:
+    should_resume = False
+    try:
+        if suspend_wakeword and ww_listener is not None:
+            try:
+                should_resume = ww_listener.suspend()
+                if not should_resume:
+                    logger.debug(
+                        "Wake word listener was not running when attempting to suspend before %s trigger.",
+                        trigger,
+                    )
+            except Exception:  # pragma: no cover - defensive guard
+                logger.exception("Could not suspend wake word listener before recording")
+                should_resume = False
 
-    await notify("status: Transkriberar ...")
-    buf = io.BytesIO()
-    save_wav_mono16(buf, audio)
-    wav_bytes = buf.getvalue()
+        await notify(f"status: Lyssnar ({trigger}) ...")
+        audio = record_until_silence()
+        if audio.size == 0:
+            await notify("status: Hörde inget – försök igen.")
+            return {"ok": False, "error": "no_audio"}
 
-    text = await stt_transcribe_wav(wav_bytes, language="sv")
-    await notify(f"du: {text}")
+        await notify("status: Transkriberar ...")
+        buf = io.BytesIO()
+        save_wav_mono16(buf, audio)
+        wav_bytes = buf.getvalue()
 
-    await notify("status: Söker i kunskapsbas ...")
-    rag = await rag_answer(text)
-    if rag.used_rag:
-        await notify("status: Hittade relevanta källor.")
-    else:
-        await notify("status: Inga träffar – använder generell kunskap.")
-    await notify(f"context: {rag.context_payload()}")
-    reply = rag.answer
-    await notify(f"assistent: {reply}")
+        text = await stt_transcribe_wav(wav_bytes, language="sv")
+        await notify(f"du: {text}")
 
-    await notify("status: Skapar tal ...")
-    wav_reply = await tts_speak_sv(reply)
+        await notify("status: Söker i kunskapsbas ...")
+        rag = await rag_answer(text)
+        if rag.used_rag:
+            await notify("status: Hittade relevanta källor.")
+        else:
+            await notify("status: Inga träffar – använder generell kunskap.")
+        await notify(f"context: {rag.context_payload()}")
+        reply = rag.answer
+        await notify(f"assistent: {reply}")
 
-    # Spara och spela upp
-    out_path = OUTPUT_WAV_PATH
-    with open(out_path, "wb") as f:
-        f.write(wav_reply)
+        await notify("status: Skapar tal ...")
+        wav_reply = await tts_speak_sv(reply)
 
-    played = False
-    play_cmd = (PLAY_CMD or "").strip()
-    if play_cmd:
-        try:
-            subprocess.run(shlex.split(play_cmd) + [out_path], check=True)
-            played = True
-        except FileNotFoundError:
-            logger.warning(
-                "Playback command '%s' was not found; falling back to sounddevice.",
-                play_cmd,
-            )
-        except subprocess.CalledProcessError as exc:
-            logger.error(
-                "Playback command '%s' failed with exit code %s; falling back to sounddevice.",
-                play_cmd,
-                exc.returncode,
-            )
-        except Exception as exc:
-            logger.error("Playback command error (%s); falling back to sounddevice.", exc)
+        # Spara och spela upp
+        out_path = OUTPUT_WAV_PATH
+        with open(out_path, "wb") as f:
+            f.write(wav_reply)
 
-    if not played:
-        try:
-            play_wav_bytes(wav_reply)
-            played = True
-        except Exception as exc:
-            logger.error("Could not play audio with sounddevice: %s", exc)
+        played = False
+        play_cmd = (PLAY_CMD or "").strip()
+        if play_cmd:
+            try:
+                subprocess.run(shlex.split(play_cmd) + [out_path], check=True)
+                played = True
+            except FileNotFoundError:
+                logger.warning(
+                    "Playback command '%s' was not found; falling back to sounddevice.",
+                    play_cmd,
+                )
+            except subprocess.CalledProcessError as exc:
+                logger.error(
+                    "Playback command '%s' failed with exit code %s; falling back to sounddevice.",
+                    play_cmd,
+                    exc.returncode,
+                )
+            except Exception as exc:
+                logger.error("Playback command error (%s); falling back to sounddevice.", exc)
 
-    if not played:
-        await notify("status: Kunde inte spela upp ljudet.")
+        if not played:
+            try:
+                play_wav_bytes(wav_reply)
+                played = True
+            except Exception as exc:
+                logger.error("Could not play audio with sounddevice: %s", exc)
 
-    return {
-        "ok": True,
-        "question": text,
-        "answer": reply,
-        "used_rag": rag.used_rag,
-        "contexts": rag.contexts_for_client(),
-    }
+        if not played:
+            await notify("status: Kunde inte spela upp ljudet.")
+
+        return {
+            "ok": True,
+            "question": text,
+            "answer": reply,
+            "used_rag": rag.used_rag,
+            "contexts": rag.contexts_for_client(),
+        }
+    finally:
+        if should_resume and ww_listener is not None:
+            if not ww_listener.resume():
+                logger.warning(
+                    "Wake word listener could not be restarted after %s trigger.",
+                    trigger,
+                )
 
 @app.post("/api/converse")
 async def converse():
-    data = await full_converse_flow(trigger="touch")
+    data = await full_converse_flow(trigger="touch", suspend_wakeword=True)
     return JSONResponse(data)
 
 
@@ -195,7 +216,7 @@ async def startup_event():
     async def on_detect():
         await notify("status: Wakeword detekterat!")
         try:
-            await full_converse_flow(trigger="wakeword")
+            await full_converse_flow(trigger="wakeword", suspend_wakeword=False)
         except Exception as e:
             await notify(f"fel: {e}")
 
