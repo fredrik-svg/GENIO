@@ -25,7 +25,10 @@ def _load_sounddevice():
     spec = util.find_spec("sounddevice")
     if spec is None:
         return None
-    return import_module("sounddevice")
+    try:
+        return import_module("sounddevice")
+    except OSError:
+        return None
 
 
 def _print_devices(
@@ -48,7 +51,7 @@ def _print_devices(
 def main() -> int:
     sounddevice = _load_sounddevice()
     if sounddevice is None:
-        print("sounddevice is not installed; unable to list audio devices.")
+        print("sounddevice is not installed or could not be initialized; unable to list audio devices.")
         devices = []
     else:
         devices = sounddevice.query_devices()
