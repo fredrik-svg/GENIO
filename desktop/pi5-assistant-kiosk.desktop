@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pi5 Assistant (Kiosk)
+Comment=Starta Pi5-assistenten i helskärmsläge (Chromium kiosk).
+Exec=/home/pi/apps/pi5-assistant/scripts/pi5-assistant-kiosk.sh
+Icon=chromium-browser
+Terminal=false
+Categories=Utility;AudioVideo;
+StartupNotify=false
