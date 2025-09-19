@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Administration – Pi5 Röstassistent</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --card-bg: rgba(16, 29, 52, 0.92);
+      --card-border: rgba(37, 54, 89, 0.9);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      background: radial-gradient(circle at top, #14213d, #0b1220);
+      color: #eef2ff;
+    }
+    a { color: inherit; }
+    .wrap {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      padding: 32px 24px 48px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .title {
+      font-size: 34px;
+      margin: 0;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      padding: 12px 20px;
+      border-radius: 14px;
+      background: #1f2a44;
+      border: 2px solid #3c4a6b;
+      color: #fff;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.1s ease;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn.danger { background: #51222d; border-color: #823648; }
+    .btn.secondary { background: #13233d; border-color: #2a3b5f; }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 22px;
+      padding: 26px;
+      box-shadow: 0 25px 45px rgba(0, 0, 0, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .card h2 { margin: 0; font-size: 24px; }
+    .helper { margin: 0; opacity: 0.85; }
+    label { display: block; font-weight: 600; margin-bottom: 8px; }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1 1 220px;
+    }
+    .field input,
+    .field select,
+    .field textarea {
+      padding: 14px 16px;
+      border-radius: 14px;
+      border: 2px solid #3c4a6b;
+      background: rgba(15, 26, 47, 0.9);
+      color: #eef2ff;
+      font-size: 16px;
+      font-family: inherit;
+    }
+    .field input[type="color"] {
+      padding: 0;
+      height: 48px;
+      cursor: pointer;
+    }
+    .grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+    }
+    .name-preview {
+      font-size: 22px;
+      font-weight: 600;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: rgba(18, 36, 70, 0.9);
+      border: 1px solid rgba(76, 101, 150, 0.6);
+    }
+    .name-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .name-options button {
+      font-size: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(92, 123, 184, 0.7);
+      background: rgba(25, 45, 82, 0.85);
+      color: inherit;
+      cursor: pointer;
+    }
+    .name-options button:hover { background: rgba(40, 66, 118, 0.9); }
+    .status { font-size: 16px; opacity: 0.9; }
+    .log {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .log-entry {
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: #132f3d;
+      border: 1px solid #214a61;
+      line-height: 1.4;
+      font-size: 16px;
+    }
+    .log-entry.success { border-color: #1b7750; background: #12392d; }
+    .log-entry.error { border-color: #7a2c2c; background: #3f1b22; }
+    .log-entry small {
+      display: block;
+      margin-top: 8px;
+      opacity: 0.75;
+    }
+    @media (max-width: 720px) {
+      .wrap { padding: 24px 16px 40px; }
+      header { justify-content: center; }
+      .btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 class="title">Administration</h1>
+      <a class="btn secondary" href="/">⬅ Tillbaka till assistenten</a>
+    </header>
+
+    <div class="card" id="appearance-card">
+      <div>
+        <h2>Bygg assistentens identitet</h2>
+        <p class="helper">Sätt namn, bakgrund, typsnitt och färger som gäller för startsidan. Förhandsgranska namnet nedan.</p>
+      </div>
+      <form id="appearance-form">
+        <div class="grid">
+          <div class="field">
+            <label for="name-prefix">Prefix</label>
+            <input id="name-prefix" name="name-prefix" type="text" placeholder="t.ex. Team" />
+          </div>
+          <div class="field">
+            <label for="name-core">Huvudnamn</label>
+            <input id="name-core" name="name-core" type="text" placeholder="t.ex. Genio" />
+          </div>
+          <div class="field">
+            <label for="name-suffix">Suffix</label>
+            <input id="name-suffix" name="name-suffix" type="text" placeholder="t.ex. AI" />
+          </div>
+        </div>
+        <div class="name-options" aria-label="Namnsförslag">
+          <span>Snabbval:</span>
+          <button type="button" data-name-part="prefix" data-value="Team">Team</button>
+          <button type="button" data-name-part="prefix" data-value="Projekt">Projekt</button>
+          <button type="button" data-name-part="core" data-value="Genio">Genio</button>
+          <button type="button" data-name-part="core" data-value="Kompis">Kompis</button>
+          <button type="button" data-name-part="core" data-value="Vision">Vision</button>
+          <button type="button" data-name-part="suffix" data-value="AI">AI</button>
+          <button type="button" data-name-part="suffix" data-value="Assist">Assist</button>
+          <button type="button" data-name-part="suffix" data-value="Hub">Hub</button>
+        </div>
+        <div class="field">
+          <label for="assistant-name">Resultat</label>
+          <input id="assistant-name" name="assistant-name" type="text" placeholder="Skriv fritt eller använd byggaren" />
+        </div>
+        <div class="name-preview">Förhandsvisning: <span id="assistant-preview">Pi5 Röstassistent</span></div>
+        <hr />
+        <div class="grid">
+          <div class="field">
+            <label for="background-image">Bakgrundsbild (URL)</label>
+            <input id="background-image" name="background-image" type="text" placeholder="https://.../bild.jpg" />
+          </div>
+          <div class="field">
+            <label for="font-family">Typsnitt</label>
+            <input id="font-family" name="font-family" type="text" list="font-options" placeholder="system-ui, sans-serif" />
+            <datalist id="font-options">
+              <option value="system-ui, -apple-system, 'Segoe UI', Roboto, Arial"></option>
+              <option value="'Poppins', 'Segoe UI', sans-serif"></option>
+              <option value="'Montserrat', 'Segoe UI', sans-serif"></option>
+              <option value="'Fira Sans', 'Segoe UI', sans-serif"></option>
+              <option value="'Merriweather', Georgia, serif"></option>
+            </datalist>
+          </div>
+        </div>
+        <div class="grid">
+          <div class="field">
+            <label for="primary-button-color">Primär knapfärg</label>
+            <input id="primary-button-color" name="primary-button-color" type="color" value="#1f2a44" />
+          </div>
+          <div class="field">
+            <label for="secondary-button-color">Sekundär knapfärg</label>
+            <input id="secondary-button-color" name="secondary-button-color" type="color" value="#13233d" />
+          </div>
+          <div class="field">
+            <label for="button-text-color">Textfärg på knappar</label>
+            <input id="button-text-color" name="button-text-color" type="color" value="#ffffff" />
+          </div>
+        </div>
+        <div class="grid">
+          <button class="btn" id="appearance-submit" type="submit">Spara utseende</button>
+        </div>
+      </form>
+      <div class="status" id="appearance-status">Inställningarna gäller för startsidan.</div>
+    </div>
+
+    <div class="card">
+      <div>
+        <h2>Hantera kunskapsbas (RAG)</h2>
+        <p class="helper">Indexera nya källor eller rensa befintligt innehåll.</p>
+      </div>
+      <form class="grid" id="rag-form">
+        <div class="field" style="flex:1 1 100%">
+          <label for="rag-input">Källor att indexera</label>
+          <textarea
+            class="rag-input"
+            id="rag-input"
+            name="sources"
+            rows="4"
+            placeholder="https://exempel.se/dokument.pdf&#10;/home/pi/dokument.txt"
+          ></textarea>
+        </div>
+        <button class="btn" type="submit" id="rag-submit">Indexera källor</button>
+        <button class="btn danger" type="button" id="rag-reset">Rensa kunskapsbasen</button>
+      </form>
+      <div class="status" id="status">Redo.</div>
+      <div class="log" id="log" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script>
+    const appearanceForm = document.getElementById('appearance-form');
+    const namePrefix = document.getElementById('name-prefix');
+    const nameCore = document.getElementById('name-core');
+    const nameSuffix = document.getElementById('name-suffix');
+    const assistantNameInput = document.getElementById('assistant-name');
+    const assistantPreview = document.getElementById('assistant-preview');
+    const backgroundInput = document.getElementById('background-image');
+    const fontInput = document.getElementById('font-family');
+    const primaryColorInput = document.getElementById('primary-button-color');
+    const secondaryColorInput = document.getElementById('secondary-button-color');
+    const buttonTextColorInput = document.getElementById('button-text-color');
+    const appearanceStatus = document.getElementById('appearance-status');
+    const ragForm = document.getElementById('rag-form');
+    const ragInput = document.getElementById('rag-input');
+    const ragSubmit = document.getElementById('rag-submit');
+    const ragReset = document.getElementById('rag-reset');
+    const statusEl = document.getElementById('status');
+    const log = document.getElementById('log');
+
+    const defaultSettings = {
+      assistantName: 'Pi5 Röstassistent',
+      backgroundImage: '',
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial",
+      primaryButtonColor: '#1f2a44',
+      secondaryButtonColor: '#13233d',
+      buttonTextColor: '#ffffff'
+    };
+
+    function updateNameFromBuilder(){
+      const parts = [namePrefix.value.trim(), nameCore.value.trim(), nameSuffix.value.trim()].filter(Boolean);
+      if(parts.length){
+        assistantNameInput.value = parts.join(' ');
+      }
+      updateNamePreview();
+    }
+
+    function updateNamePreview(){
+      const value = assistantNameInput.value.trim();
+      assistantPreview.textContent = value || '—';
+    }
+
+    document.querySelectorAll('[data-name-part]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const part = btn.getAttribute('data-name-part');
+        const value = btn.getAttribute('data-value');
+        if(part === 'prefix') namePrefix.value = value;
+        if(part === 'core') nameCore.value = value;
+        if(part === 'suffix') nameSuffix.value = value;
+        updateNameFromBuilder();
+      });
+    });
+
+    [namePrefix, nameCore, nameSuffix].forEach((input) => {
+      input.addEventListener('input', updateNameFromBuilder);
+    });
+
+    assistantNameInput.addEventListener('input', updateNamePreview);
+
+    async function loadSettings(){
+      try {
+        const res = await fetch('/api/ui-settings');
+        const data = await res.json();
+        if(res.ok && data.ok && data.settings){
+          applySettingsToForm(data.settings);
+        } else {
+          applySettingsToForm(defaultSettings);
+        }
+      } catch (err) {
+        console.error('Kunde inte läsa inställningar', err);
+        applySettingsToForm(defaultSettings);
+      }
+    }
+
+    function applySettingsToForm(settings){
+      const merged = { ...defaultSettings, ...settings };
+      assistantNameInput.value = merged.assistantName || defaultSettings.assistantName;
+      backgroundInput.value = merged.backgroundImage || '';
+      fontInput.value = merged.fontFamily || defaultSettings.fontFamily;
+      primaryColorInput.value = merged.primaryButtonColor || defaultSettings.primaryButtonColor;
+      secondaryColorInput.value = merged.secondaryButtonColor || defaultSettings.secondaryButtonColor;
+      buttonTextColorInput.value = merged.buttonTextColor || defaultSettings.buttonTextColor;
+      updateNamePreview();
+    }
+
+    appearanceForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const payload = {
+        assistantName: assistantNameInput.value.trim() || defaultSettings.assistantName,
+        backgroundImage: backgroundInput.value.trim(),
+        fontFamily: fontInput.value.trim() || defaultSettings.fontFamily,
+        primaryButtonColor: primaryColorInput.value,
+        secondaryButtonColor: secondaryColorInput.value,
+        buttonTextColor: buttonTextColorInput.value
+      };
+
+      appearanceStatus.textContent = 'Sparar inställningar ...';
+      try {
+        const res = await fetch('/api/ui-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          appearanceStatus.textContent = 'Inställningarna är sparade.';
+        } else {
+          appearanceStatus.textContent = data.error || 'Kunde inte spara inställningarna.';
+        }
+      } catch (err){
+        appearanceStatus.textContent = 'Ett fel inträffade vid sparande.';
+        console.error(err);
+      }
+    });
+
+    function pushLog(message, type = 'info', meta = ''){
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`.trim();
+      entry.textContent = message;
+      if(meta){
+        const small = document.createElement('small');
+        small.textContent = meta;
+        entry.appendChild(small);
+      }
+      log.prepend(entry);
+    }
+
+    ragForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const raw = ragInput.value.trim();
+      if(!raw){
+        ragInput.focus();
+        return;
+      }
+
+      const sources = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+      if(!sources.length){
+        ragInput.focus();
+        return;
+      }
+
+      statusEl.textContent = 'Indexerar källor ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      ragInput.disabled = true;
+      try {
+        const res = await fetch('/api/rag/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sources })
+        });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          const added = typeof data.chunks_added === 'number' ? data.chunks_added : 'okänt antal';
+          statusEl.textContent = `Indexerade ${added} textdelar.`;
+          pushLog(`Källa${sources.length > 1 ? 'r' : ''} indexerade.`, 'success', sources.join('\n'));
+          ragInput.value = '';
+        } else {
+          const error = data.error || 'Kunde inte indexera källorna.';
+          statusEl.textContent = error;
+          pushLog(error, 'error', sources.join('\n'));
+        }
+      } catch (err){
+        statusEl.textContent = 'Fel: ' + err;
+        pushLog('Ett fel inträffade vid indexering.', 'error');
+      } finally {
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+        ragInput.disabled = false;
+        ragInput.focus();
+      }
+    });
+
+    ragReset.addEventListener('click', async () => {
+      if(!confirm('Är du säker på att du vill rensa kunskapsbasen?')){
+        return;
+      }
+      statusEl.textContent = 'Rensar kunskapsbas ...';
+      ragSubmit.disabled = true;
+      ragReset.disabled = true;
+      ragInput.disabled = true;
+      try {
+        const res = await fetch('/api/rag/reset', { method: 'POST' });
+        const data = await res.json();
+        if(res.ok && data.ok){
+          statusEl.textContent = 'Kunskapsbasen är rensad.';
+          pushLog('Kunskapsbasen rensades.', 'success');
+        } else {
+          const error = data.error || 'Kunde inte rensa kunskapsbasen.';
+          statusEl.textContent = error;
+          pushLog(error, 'error');
+        }
+      } catch (err){
+        statusEl.textContent = 'Fel: ' + err;
+        pushLog('Ett fel inträffade vid rensning.', 'error');
+      } finally {
+        ragSubmit.disabled = false;
+        ragReset.disabled = false;
+        ragInput.disabled = false;
+      }
+    });
+
+    loadSettings();
+  </script>
+</body>
+</html>
