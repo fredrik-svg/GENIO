@@ -11,7 +11,43 @@ import wave
 from typing import BinaryIO, cast
 
 import numpy as np
-import sounddevice as sd
+if not getattr(wave.open, "__genio_pathlike__", False):  # pragma: no cover - exercised in tests
+    _original_wave_open = wave.open
+
+    def _wave_open(path, mode=None):
+        if isinstance(path, os.PathLike):
+            path = os.fspath(path)
+        return _original_wave_open(path, mode)
+
+    _wave_open.__genio_pathlike__ = True
+    wave.open = _wave_open
+try:
+    import sounddevice as sd
+except OSError as exc:  # pragma: no cover - exercised in environments without PortAudio
+    class _SoundDeviceStub:
+        PortAudioError = RuntimeError
+
+        def __init__(self) -> None:
+            self.default = type("_Default", (), {"samplerate": None})()
+            self._sounddevice_stub = True
+
+        def __getattr__(self, name):  # pragma: no cover - defensive
+            raise RuntimeError("sounddevice library unavailable")
+
+    sd = _SoundDeviceStub()
+    _SOUNDDEVICE_IMPORT_ERROR = exc
+else:
+    _SOUNDDEVICE_IMPORT_ERROR = None
+
+
+def _sounddevice_error():
+    if getattr(sd, "_sounddevice_stub", False):
+        return _SOUNDDEVICE_IMPORT_ERROR
+    return None
+
+
+def _sounddevice_available() -> bool:
+    return _sounddevice_error() is None
 
 from .config import (
     ENERGY_THRESHOLD,
@@ -34,6 +70,10 @@ def _detect_input_device(device):
     When ``has_device`` is ``False`` the second element contains a human
     readable message describing the reason, which can be logged by the caller.
     """
+
+    error = _sounddevice_error()
+    if error is not None:
+        return False, f"sounddevice library unavailable: {error}"
 
     try:
         if device not in (None, ""):
@@ -80,15 +120,16 @@ def _gather_fallback_sample_rates(device, excluded_rates):
         seen.add(rounded)
         candidates.append(rounded)
 
-    try:
-        device_info = sd.query_devices(device, "input")
-    except Exception as info_exc:  # pragma: no cover - defensive
-        logger.error("Could not query input device info: %s", info_exc)
-    else:
-        add(device_info.get("default_samplerate"))
+    if _sounddevice_available():
+        try:
+            device_info = sd.query_devices(device, "input")
+        except Exception as info_exc:  # pragma: no cover - defensive
+            logger.error("Could not query input device info: %s", info_exc)
+        else:
+            add(device_info.get("default_samplerate"))
 
-    default_samplerate = getattr(getattr(sd, "default", None), "samplerate", None)
-    add(default_samplerate)
+        default_samplerate = getattr(getattr(sd, "default", None), "samplerate", None)
+        add(default_samplerate)
 
     for rate in _COMMON_SAMPLE_RATES:
         add(rate)
@@ -147,7 +188,9 @@ def record_until_silence() -> np.ndarray:
             logger.warning("No usable audio input device detected; returning silence.")
         return np.zeros((0,), dtype=np.float32)
 
-    def open_stream(sample_rate: int) -> sd.InputStream:
+    def open_stream(sample_rate: int):
+        if not _sounddevice_available():  # pragma: no cover - defensive
+            raise RuntimeError("sounddevice is unavailable")
         return sd.InputStream(
             device=device,
             samplerate=sample_rate,
@@ -260,6 +303,12 @@ def save_wav_mono16(
             def seek(self, offset: int, whence: int = io.SEEK_SET):
                 return self._raw.seek(offset, whence)
 
+            def flush(self) -> None:
+                flush = getattr(self._raw, "flush", None)
+                if flush is not None:
+                    flush()
+                return None
+
             def close(self) -> None:
                 # ``wave`` försöker stänga strömmen – ignorera för att låta
                 # anroparen hantera livscykeln.
@@ -284,7 +333,9 @@ def save_wav_mono16(
             pass
         return
 
-    with wave.open(destination, "wb") as wav_file:
+    path_like = os.fspath(destination) if isinstance(destination, os.PathLike) else destination
+
+    with wave.open(path_like, "wb") as wav_file:
         _write(wav_file)
 
 
@@ -316,6 +367,14 @@ def play_wav_bytes(data: bytes) -> None:
 
     if channels > 1:
         audio = np.reshape(audio, (-1, channels))
+
+    error = _sounddevice_error()
+    if error is not None:
+        logger.warning(
+            "Cannot play audio because sounddevice is unavailable: %s",
+            error,
+        )
+        return
 
     sd.play(audio, samplerate=sample_rate)
     sd.wait()
