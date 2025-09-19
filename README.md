@@ -55,6 +55,22 @@ sudo systemctl start pi5-assistant
 # status: sudo systemctl status pi5-assistant
 ```
 
+7) **(Valfritt) Genväg i kioskläge**
+```bash
+# gör skriptet körbart (om det inte redan är det)
+chmod +x scripts/pi5-assistant-kiosk.sh
+
+# kopiera .desktop-filen till din användare (Pi OS använder /home/pi)
+install -Dm644 desktop/pi5-assistant-kiosk.desktop \
+  ~/.local/share/applications/pi5-assistant-kiosk.desktop
+
+# uppdatera genvägen om projektet ligger på en annan sökväg
+sed -i "s|/home/pi/apps/pi5-assistant|$PWD|" \
+  ~/.local/share/applications/pi5-assistant-kiosk.desktop
+```
+
+> Genvägen startar backend om den inte redan kör och öppnar sedan Chromium i helskärmsläge på `http://localhost:8080`.
+
 ## Wakeword
 
 - Standardfras: **"Hej kompis"**
