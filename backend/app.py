@@ -1,8 +1,8 @@
 
 import asyncio, io, os, subprocess, logging, shlex
 from fastapi import FastAPI, WebSocket
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
 
 from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH
@@ -10,6 +10,7 @@ from .audio import record_until_silence, save_wav_mono16, play_wav_bytes
 from .openai_client import stt_transcribe_wav, tts_speak_sv
 from .wakeword import WakeWordListener
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
+from .ui_settings import load_ui_settings, save_ui_settings, UISettings
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,14 @@ async def index() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 
-@app.get("/rag", response_class=HTMLResponse)
-async def rag_page() -> FileResponse:
-    return FileResponse(os.path.join(static_dir, "rag.html"))
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page() -> FileResponse:
+    return FileResponse(os.path.join(static_dir, "admin.html"))
+
+
+@app.get("/rag")
+async def rag_page_redirect():
+    return RedirectResponse(url="/admin", status_code=307)
 
 # simple status broadcast (optional)
 clients = set()
@@ -196,6 +202,31 @@ async def ask(payload: AskPayload):
 
 class RAGIngestPayload(BaseModel):
     sources: list[str] = Field(default_factory=list, description="Lista av URL:er eller filvägar som ska indexeras.")
+
+
+class UISettingsUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    assistant_name: str | None = Field(default=None, alias="assistantName")
+    background_image: str | None = Field(default=None, alias="backgroundImage")
+    font_family: str | None = Field(default=None, alias="fontFamily")
+    primary_button_color: str | None = Field(default=None, alias="primaryButtonColor")
+    secondary_button_color: str | None = Field(default=None, alias="secondaryButtonColor")
+    button_text_color: str | None = Field(default=None, alias="buttonTextColor")
+
+
+@app.get("/api/ui-settings")
+async def get_ui_settings():
+    settings = load_ui_settings()
+    return JSONResponse({"ok": True, "settings": settings.model_dump(by_alias=True)})
+
+
+@app.post("/api/ui-settings")
+async def update_ui_settings(payload: UISettingsUpdate):
+    current = load_ui_settings()
+    updated = current.merged_with(payload.model_dump(exclude_unset=True, by_alias=True))
+    save_ui_settings(updated)
+    return JSONResponse({"ok": True, "settings": updated.model_dump(by_alias=True)})
 
 
 @app.post("/api/rag/ingest")

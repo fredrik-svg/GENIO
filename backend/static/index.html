@@ -3,35 +3,156 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pi5 Röstassistent (Svenska)</title>
+  <title>Pi5 Röstassistent</title>
   <style>
-    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial; background:#0b1220; color:#eef2ff; }
-    .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; padding:24px; }
-    .actions { display:flex; flex-wrap:wrap; gap:16px; justify-content:center; }
-    .btn { display:inline-flex; align-items:center; justify-content:center; font-size:28px; padding:24px 32px; border-radius:20px; background:#1f2a44; border:2px solid #3c4a6b; color:#fff; cursor:pointer; text-decoration:none; }
-    .btn:active { transform: scale(0.98); }
-    .btn.secondary { background:#13233d; border-color:#2a3b5f; font-size:20px; padding:16px 24px; }
-    .status { font-size:18px; opacity:0.9; }
-    .bubble { max-width: 800px; width: 95%; padding: 16px 18px; border-radius: 16px; line-height: 1.4; }
-    .user { background: #12233f; }
-    .assistant { background: #1a2f54; }
-    .context { background: #132f3d; font-size: 16px; }
-    .context h3 { margin-top: 0; margin-bottom: 8px; font-size: 18px; }
-    .context ol { margin: 0; padding-left: 20px; }
-    .context li { margin-bottom: 6px; }
-    .ask-form { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; max-width:800px; width:95%; }
-    .ask-input { flex:1 1 240px; padding:16px 18px; border-radius:16px; border:2px solid #3c4a6b; background:#0f1a2f; color:#eef2ff; font-size:20px; }
-    .ask-input::placeholder { color:rgba(238,242,255,0.6); }
-    .ask-submit { font-size:22px; padding:16px 24px; }
-    .btn:disabled, .ask-submit:disabled { opacity:0.5; cursor:not-allowed; }
+    :root {
+      color-scheme: dark;
+      --background-color: #0b1220;
+      --background-image: none;
+      --font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      --primary-button-bg: #1f2a44;
+      --secondary-button-bg: #13233d;
+      --button-text-color: #ffffff;
+      --surface-strong: rgba(17, 27, 46, 0.92);
+      --surface-soft: rgba(26, 47, 84, 0.85);
+      --surface-border: rgba(60, 74, 107, 0.6);
+      --text-color: #eef2ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: var(--font-family);
+      background-color: var(--background-color);
+      background-image: var(--background-image);
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      color: var(--text-color);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 12, 24, 0.55);
+      pointer-events: none;
+    }
+    .brand {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: rgba(12, 21, 39, 0.75);
+      border: 1px solid rgba(67, 90, 135, 0.45);
+      font-weight: 600;
+      backdrop-filter: blur(6px);
+      z-index: 10;
+    }
+    .wrap {
+      position: relative;
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      padding: 72px 24px 48px;
+      text-align: center;
+    }
+    .wrap > * { position: relative; z-index: 1; }
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 48px);
+      text-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      justify-content: center;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      padding: 24px 32px;
+      border-radius: 20px;
+      background: var(--primary-button-bg);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      color: var(--button-text-color);
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.35);
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn.secondary {
+      background: var(--secondary-button-bg);
+      border-color: rgba(255, 255, 255, 0.12);
+      font-size: 20px;
+      padding: 16px 24px;
+    }
+    .status {
+      font-size: 18px;
+      opacity: 0.9;
+      max-width: 640px;
+    }
+    .bubble {
+      max-width: 800px;
+      width: min(95%, 800px);
+      margin: 0 auto;
+      padding: 16px 18px;
+      border-radius: 16px;
+      line-height: 1.5;
+      background: var(--surface-strong);
+      border: 1px solid var(--surface-border);
+      backdrop-filter: blur(4px);
+      text-align: left;
+    }
+    .bubble.user { background: rgba(18, 35, 63, 0.82); }
+    .bubble.assistant { background: var(--surface-soft); }
+    .bubble.context { background: rgba(19, 47, 61, 0.8); font-size: 16px; }
+    .bubble.context h3 { margin-top: 0; margin-bottom: 8px; font-size: 18px; }
+    .bubble.context ol { margin: 0; padding-left: 20px; }
+    .bubble.context li { margin-bottom: 6px; }
+    .ask-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      max-width: 800px;
+      width: min(95%, 800px);
+    }
+    .ask-input {
+      flex: 1 1 240px;
+      padding: 16px 18px;
+      border-radius: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.18);
+      background: rgba(15, 26, 47, 0.85);
+      color: var(--text-color);
+      font-size: 20px;
+      font-family: inherit;
+      backdrop-filter: blur(4px);
+    }
+    .ask-input::placeholder { color: rgba(238, 242, 255, 0.6); }
+    .ask-submit { font-size: 22px; padding: 16px 24px; }
+    .btn:disabled, .ask-submit:disabled { opacity: 0.55; cursor: not-allowed; }
+    @media (max-width: 600px) {
+      .wrap { padding: 96px 18px 40px; }
+      .btn { width: 100%; font-size: 24px; }
+      .ask-submit { width: 100%; }
+      .brand { position: static; margin: 24px auto 0; display: inline-block; }
+    }
   </style>
 </head>
 <body>
+  <div class="brand" id="assistant-brand">Pi5 Röstassistent</div>
   <div class="wrap">
-    <h1>Pi5 Röstassistent 🇸🇪</h1>
+    <h1 id="assistant-title">Pi5 Röstassistent</h1>
     <div class="actions">
       <button class="btn" id="talk">Tryck för att prata</button>
-      <a class="btn secondary" href="/rag">Hantera kunskapsbas</a>
     </div>
     <form class="ask-form" id="ask-form">
       <input
@@ -55,9 +176,58 @@
     const askForm = document.getElementById('ask-form');
     const askInput = document.getElementById('ask-input');
     const askSubmit = document.getElementById('ask-submit');
+    const assistantBrand = document.getElementById('assistant-brand');
+    const assistantTitle = document.getElementById('assistant-title');
+    const root = document.documentElement;
+
+    const defaultSettings = {
+      assistantName: 'Pi5 Röstassistent',
+      backgroundImage: '',
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial",
+      primaryButtonColor: '#1f2a44',
+      secondaryButtonColor: '#13233d',
+      buttonTextColor: '#ffffff'
+    };
+
+    let assistantName = defaultSettings.assistantName;
     let lastQuestion = '';
     let lastAnswer = '';
     let lastContexts = [];
+
+    function cssUrl(value){
+      if(!value){
+        return 'none';
+      }
+      const sanitized = value.replace(/"/g, '\\"');
+      return `url("${sanitized}")`;
+    }
+
+    function applyUiSettings(settings){
+      const merged = { ...defaultSettings, ...settings };
+      assistantName = merged.assistantName || defaultSettings.assistantName;
+      assistantBrand.textContent = assistantName;
+      assistantTitle.textContent = assistantName;
+      root.style.setProperty('--font-family', merged.fontFamily || defaultSettings.fontFamily);
+      root.style.setProperty('--primary-button-bg', merged.primaryButtonColor || defaultSettings.primaryButtonColor);
+      root.style.setProperty('--secondary-button-bg', merged.secondaryButtonColor || defaultSettings.secondaryButtonColor);
+      root.style.setProperty('--button-text-color', merged.buttonTextColor || defaultSettings.buttonTextColor);
+      root.style.setProperty('--background-image', cssUrl(merged.backgroundImage));
+    }
+
+    async function loadUiSettings(){
+      try {
+        const res = await fetch('/api/ui-settings');
+        const data = await res.json();
+        if(res.ok && data.ok && data.settings){
+          applyUiSettings(data.settings);
+        } else {
+          applyUiSettings(defaultSettings);
+        }
+      } catch (err){
+        console.error('Kunde inte ladda UI-inställningar', err);
+        applyUiSettings(defaultSettings);
+      }
+    }
 
     function renderConversation(){
       log.innerHTML = '';
@@ -70,7 +240,7 @@
       if(lastAnswer){
         const answerDiv = document.createElement('div');
         answerDiv.className = 'bubble assistant';
-        answerDiv.textContent = 'Assistent: ' + lastAnswer;
+        answerDiv.textContent = assistantName + ': ' + lastAnswer;
         log.appendChild(answerDiv);
       }
       if(lastContexts.length){
@@ -159,13 +329,14 @@
         if(res.ok && data.ok){
           setConversation(data.question, data.answer);
           setContexts(data.contexts || []);
-          statusEl.textContent = 'Klar. Ställ en ny fråga eller prata med knappen.';
+          statusEl.textContent = 'Svar klart.';
           askInput.value = '';
         }else{
-          statusEl.textContent = data.error || 'Kunde inte få svar just nu.';
+          const error = data.error || 'Kunde inte få svar.';
+          statusEl.textContent = error;
         }
-      }catch(e){
-        statusEl.textContent = 'Fel: ' + e;
+      }catch(err){
+        statusEl.textContent = 'Fel: ' + err;
       }finally{
         askSubmit.disabled = false;
         askInput.disabled = false;
@@ -173,7 +344,6 @@
       }
     });
 
-    // websocket status
     const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onmessage = (ev) => {
       const msg = ev.data;
@@ -194,6 +364,8 @@
         statusEl.textContent = msg;
       }
     };
+
+    loadUiSettings();
   </script>
 </body>
 </html>
