@@ -86,6 +86,10 @@
       font-size: 16px;
       font-family: inherit;
     }
+    .field small {
+      font-size: 14px;
+      opacity: 0.75;
+    }
     .field input[type="color"] {
       padding: 0;
       height: 48px;
@@ -193,8 +197,10 @@
         <hr />
         <div class="grid">
           <div class="field">
-            <label for="background-image">Bakgrundsbild (URL)</label>
+            <label for="background-image">Bakgrundsbild</label>
             <input id="background-image" name="background-image" type="text" placeholder="https://.../bild.jpg" />
+            <input id="background-upload" name="background-upload" type="file" accept="image/*" />
+            <small id="background-upload-feedback">Ange en URL eller välj en bild från datorn (max 6 MB).</small>
           </div>
           <div class="field">
             <label for="font-family">Typsnitt</label>
@@ -261,6 +267,8 @@
     const assistantNameInput = document.getElementById('assistant-name');
     const assistantPreview = document.getElementById('assistant-preview');
     const backgroundInput = document.getElementById('background-image');
+    const backgroundUploadInput = document.getElementById('background-upload');
+    const backgroundUploadFeedback = document.getElementById('background-upload-feedback');
     const fontInput = document.getElementById('font-family');
     const primaryColorInput = document.getElementById('primary-button-color');
     const secondaryColorInput = document.getElementById('secondary-button-color');
@@ -272,6 +280,7 @@
     const ragReset = document.getElementById('rag-reset');
     const statusEl = document.getElementById('status');
     const log = document.getElementById('log');
+    const backgroundUploadDefaultText = backgroundUploadFeedback ? backgroundUploadFeedback.textContent : '';
 
     const defaultSettings = {
       assistantName: 'Pi5 Röstassistent',
@@ -311,6 +320,58 @@
     });
 
     assistantNameInput.addEventListener('input', updateNamePreview);
+
+    if(backgroundUploadInput){
+      backgroundUploadInput.addEventListener('change', async () => {
+        const file = backgroundUploadInput.files && backgroundUploadInput.files[0];
+        if(!file){
+          return;
+        }
+
+        if(backgroundUploadFeedback){
+          backgroundUploadFeedback.textContent = 'Laddar upp bakgrundsbild ...';
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        let resetFeedback = true;
+        try {
+          const res = await fetch('/api/ui-settings/background-image', {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+          if(res.ok && data.ok){
+            backgroundInput.value = data.backgroundImage || '';
+            if(backgroundUploadFeedback){
+              backgroundUploadFeedback.textContent = 'Bakgrundsbilden är uppladdad och sparad.';
+            }
+            if(appearanceStatus){
+              appearanceStatus.textContent = 'Bakgrundsbilden är uppladdad och sparad.';
+            }
+          } else {
+            if(backgroundUploadFeedback){
+              backgroundUploadFeedback.textContent = data.error || 'Kunde inte ladda upp bilden.';
+            }
+            resetFeedback = false;
+          }
+        } catch (err) {
+          console.error('Uppladdning av bakgrundsbild misslyckades', err);
+          if(backgroundUploadFeedback){
+            backgroundUploadFeedback.textContent = 'Ett fel inträffade vid uppladdningen.';
+          }
+          resetFeedback = false;
+        } finally {
+          backgroundUploadInput.value = '';
+          if(resetFeedback && backgroundUploadFeedback){
+            setTimeout(() => {
+              backgroundUploadFeedback.textContent = backgroundUploadDefaultText;
+            }, 4000);
+          }
+        }
+      });
+    }
 
     async function loadSettings(){
       try {

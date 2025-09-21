@@ -1,6 +1,6 @@
 
-import asyncio, io, os, subprocess, logging, shlex
-from fastapi import FastAPI, WebSocket
+import asyncio, io, os, subprocess, logging, shlex, uuid
+from fastapi import FastAPI, WebSocket, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Pi5 Swedish Voice Assistant")
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
+_background_upload_dir = os.path.abspath(os.path.join(static_dir, "uploads", "backgrounds"))
+_ALLOWED_IMAGE_TYPES: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/jpg": ".jpg",
+}
+_MAX_BACKGROUND_SIZE = 6 * 1024 * 1024  # 6 MB
 
 # serve frontend
 app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
@@ -227,6 +236,69 @@ async def update_ui_settings(payload: UISettingsUpdate):
     updated = current.merged_with(payload.model_dump(exclude_unset=True, by_alias=True))
     save_ui_settings(updated)
     return JSONResponse({"ok": True, "settings": updated.model_dump(by_alias=True)})
+
+
+@app.post("/api/ui-settings/background-image")
+async def upload_background_image(file: UploadFile = File(...)):
+    if not file or not file.filename:
+        return JSONResponse({"ok": False, "error": "Ingen fil skickades."}, status_code=400)
+
+    content_type = (file.content_type or "").lower()
+    extension = _ALLOWED_IMAGE_TYPES.get(content_type)
+    if not extension:
+        allowed_extensions = ", ".join(
+            sorted({ext.lstrip(".").upper() for ext in _ALLOWED_IMAGE_TYPES.values()})
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"Ogiltig filtyp. Tillåtna format: {allowed_extensions}.",
+            },
+            status_code=400,
+        )
+
+    raw_data = await file.read()
+    if not raw_data:
+        return JSONResponse({"ok": False, "error": "Filen var tom."}, status_code=400)
+
+    if len(raw_data) > _MAX_BACKGROUND_SIZE:
+        size_mb = _MAX_BACKGROUND_SIZE // (1024 * 1024)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": f"Filen är för stor. Maxstorlek är {size_mb} MB.",
+            },
+            status_code=400,
+        )
+
+    os.makedirs(_background_upload_dir, exist_ok=True)
+
+    filename = f"background-{uuid.uuid4().hex}{extension}"
+    destination_path = os.path.abspath(os.path.join(_background_upload_dir, filename))
+    with open(destination_path, "wb") as out:
+        out.write(raw_data)
+
+    await file.close()
+
+    public_path = f"/static/uploads/backgrounds/{filename}"
+
+    current = load_ui_settings()
+    previous = current.background_image or ""
+    current.background_image = public_path
+    save_ui_settings(current)
+
+    if previous.startswith("/static/"):
+        relative = previous[len("/static/"):]
+        previous_path = os.path.abspath(os.path.join(static_dir, relative))
+        try:
+            if os.path.isfile(previous_path) and os.path.commonpath(
+                [previous_path, _background_upload_dir]
+            ) == _background_upload_dir:
+                os.remove(previous_path)
+        except Exception:
+            logger.warning("Kunde inte ta bort tidigare bakgrundsbild: %s", previous_path)
+
+    return JSONResponse({"ok": True, "backgroundImage": public_path})
 
 
 @app.post("/api/rag/ingest")
