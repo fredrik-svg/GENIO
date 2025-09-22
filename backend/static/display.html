@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pi5 Röstassistent – Visning</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background-color: #0b1220;
+      --background-image: none;
+      --font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      --surface-strong: rgba(17, 27, 46, 0.92);
+      --surface-soft: rgba(26, 47, 84, 0.85);
+      --surface-border: rgba(60, 74, 107, 0.6);
+      --text-color: #eef2ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: var(--font-family);
+      background-color: var(--background-color);
+      background-image: var(--background-image);
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      color: var(--text-color);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background: rgba(7, 12, 24, 0.55);
+      pointer-events: none;
+    }
+    .brand {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      padding: 10px 14px;
+      border-radius: 14px;
+      background: rgba(12, 21, 39, 0.75);
+      border: 1px solid rgba(67, 90, 135, 0.45);
+      font-weight: 600;
+      backdrop-filter: blur(6px);
+      z-index: 10;
+    }
+    .wrap {
+      position: relative;
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 24px;
+      padding: 96px 36px 48px;
+      text-align: center;
+    }
+    .wrap > * { position: relative; z-index: 1; }
+    h1 {
+      margin: 0;
+      font-size: clamp(44px, 5.5vw, 64px);
+      text-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+    .status {
+      font-size: clamp(20px, 2.2vw, 28px);
+      opacity: 0.9;
+      max-width: 960px;
+    }
+    .conversation {
+      width: min(92%, 960px);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      align-items: stretch;
+      margin: 0 auto;
+      text-align: left;
+    }
+    .bubble {
+      padding: 24px 28px;
+      border-radius: 20px;
+      background: var(--surface-strong);
+      border: 1px solid var(--surface-border);
+      backdrop-filter: blur(4px);
+      font-size: clamp(20px, 2.2vw, 28px);
+      line-height: 1.6;
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.35);
+    }
+    .bubble h2 {
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-size: clamp(22px, 2.4vw, 32px);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.85;
+    }
+    .bubble.assistant { background: var(--surface-soft); }
+    .bubble.context { background: rgba(19, 47, 61, 0.8); font-size: clamp(18px, 2vw, 24px); }
+    .bubble.context ol {
+      margin: 0;
+      padding-left: 24px;
+    }
+    .bubble.context li {
+      margin-bottom: 10px;
+    }
+    .bubble[hidden] { display: none; }
+    @media (max-width: 700px) {
+      .wrap { padding: 80px 20px 40px; }
+      .brand { position: static; margin: 18px auto 0; display: inline-block; }
+    }
+  </style>
+</head>
+<body>
+  <div class="brand" id="assistant-brand">Pi5 Röstassistent</div>
+  <div class="wrap">
+    <h1 id="assistant-title">Pi5 Röstassistent</h1>
+    <div class="status" id="status">Redo. Vänta på svar från den andra skärmen.</div>
+    <div class="conversation">
+      <div class="bubble user" id="question-bubble" hidden>
+        <h2>Din fråga</h2>
+        <div id="question-text"></div>
+      </div>
+      <div class="bubble assistant" id="answer-bubble" hidden>
+        <h2 id="answer-heading">Svar</h2>
+        <div id="answer-text"></div>
+      </div>
+      <div class="bubble context" id="context-bubble" hidden>
+        <h2>Källor</h2>
+        <ol id="context-list"></ol>
+      </div>
+    </div>
+  </div>
+  <script>
+    const statusEl = document.getElementById('status');
+    const assistantBrand = document.getElementById('assistant-brand');
+    const assistantTitle = document.getElementById('assistant-title');
+    const answerHeading = document.getElementById('answer-heading');
+    const questionBubble = document.getElementById('question-bubble');
+    const questionText = document.getElementById('question-text');
+    const answerBubble = document.getElementById('answer-bubble');
+    const answerText = document.getElementById('answer-text');
+    const contextBubble = document.getElementById('context-bubble');
+    const contextList = document.getElementById('context-list');
+
+    const defaultSettings = {
+      assistantName: 'Pi5 Röstassistent',
+      backgroundImage: '',
+      fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, Arial"
+    };
+
+    let assistantName = defaultSettings.assistantName;
+    let lastQuestion = '';
+    let lastAnswer = '';
+    let lastContexts = [];
+
+    function cssUrl(value){
+      if(!value){
+        return 'none';
+      }
+      const sanitized = value.replace(/"/g, '\\"');
+      return `url("${sanitized}")`;
+    }
+
+    function applyUiSettings(settings){
+      const merged = { ...defaultSettings, ...settings };
+      assistantName = merged.assistantName || defaultSettings.assistantName;
+      assistantBrand.textContent = assistantName;
+      assistantTitle.textContent = assistantName;
+      answerHeading.textContent = assistantName;
+      document.documentElement.style.setProperty('--font-family', merged.fontFamily || defaultSettings.fontFamily);
+      document.documentElement.style.setProperty('--background-image', cssUrl(merged.backgroundImage));
+    }
+
+    async function loadUiSettings(){
+      try {
+        const res = await fetch('/api/ui-settings');
+        const data = await res.json();
+        if(res.ok && data.ok && data.settings){
+          applyUiSettings(data.settings);
+        } else {
+          applyUiSettings(defaultSettings);
+        }
+      } catch(err){
+        console.error('Kunde inte ladda UI-inställningar', err);
+        applyUiSettings(defaultSettings);
+      }
+    }
+
+    function renderConversation(){
+      if(lastQuestion){
+        questionBubble.hidden = false;
+        questionText.textContent = lastQuestion;
+      } else {
+        questionBubble.hidden = true;
+        questionText.textContent = '';
+      }
+
+      if(lastAnswer){
+        answerBubble.hidden = false;
+        answerText.textContent = lastAnswer;
+      } else {
+        answerBubble.hidden = true;
+        answerText.textContent = '';
+      }
+
+      contextList.innerHTML = '';
+      if(lastContexts.length){
+        contextBubble.hidden = false;
+        lastContexts.forEach((ctx) => {
+          const item = document.createElement('li');
+          const label = ctx.title || ctx.source || 'Okänd källa';
+          const score = typeof ctx.score === 'number' ? ` (match: ${(ctx.score * 100).toFixed(1)}%)` : '';
+          item.innerHTML = `<strong>${label}</strong>${score}<br><small>${ctx.text}</small>`;
+          contextList.appendChild(item);
+        });
+      } else {
+        contextBubble.hidden = true;
+      }
+    }
+
+    function setQuestion(questionTextValue){
+      lastQuestion = questionTextValue || '';
+      if(lastQuestion){
+        lastAnswer = '';
+        lastContexts = [];
+      }
+      renderConversation();
+    }
+
+    function setAnswer(answerTextValue){
+      lastAnswer = answerTextValue || '';
+      renderConversation();
+    }
+
+    function setContexts(contexts){
+      lastContexts = Array.isArray(contexts) ? contexts : [];
+      renderConversation();
+    }
+
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.onmessage = (ev) => {
+      const msg = ev.data;
+      if(msg.startsWith('status:')){
+        statusEl.textContent = msg.replace('status:','').trim();
+      } else if(msg.startsWith('du:')){
+        setQuestion(msg.slice(3).trim());
+      } else if(msg.startsWith('assistent:')){
+        setAnswer(msg.slice(10).trim());
+      } else if(msg.startsWith('context:')){
+        try {
+          const payload = JSON.parse(msg.slice(8));
+          setContexts(payload);
+        } catch(err){
+          console.error('Kunde inte tolka context-meddelande', err);
+        }
+      } else if(msg.startsWith('fel:')){
+        statusEl.textContent = msg;
+      }
+    };
+
+    loadUiSettings();
+  </script>
+</body>
+</html>
