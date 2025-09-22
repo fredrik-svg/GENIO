@@ -99,6 +99,13 @@
       opacity: 0.9;
       max-width: 640px;
     }
+    .info-note {
+      max-width: 640px;
+      margin: 0;
+      font-size: 18px;
+      opacity: 0.75;
+    }
+    #log { display: none; }
     .bubble {
       max-width: 800px;
       width: min(95%, 800px);
@@ -154,6 +161,7 @@
     <div class="actions">
       <button class="btn" id="talk">Tryck för att prata</button>
     </div>
+    <p class="info-note">Svar visas på den andra skärmen. Använd den här skärmen för att starta mikrofonen eller skriva din fråga.</p>
     <form class="ask-form" id="ask-form">
       <input
         class="ask-input"
@@ -165,7 +173,7 @@
       />
       <button class="btn ask-submit" type="submit" id="ask-submit">Skicka</button>
     </form>
-    <div class="status" id="status">Redo. Säg ”Hej kompis” eller tryck på knappen.</div>
+    <div class="status" id="status">Redo. Svar visas på visningsskärmen. Säg ”Hej kompis” eller tryck på knappen.</div>
     <div id="log"></div>
   </div>
 

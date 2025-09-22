@@ -36,6 +36,11 @@ async def index() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "index.html"))
 
 
+@app.get("/display", response_class=HTMLResponse)
+async def display_page() -> FileResponse:
+    return FileResponse(os.path.join(static_dir, "display.html"))
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "admin.html"))
