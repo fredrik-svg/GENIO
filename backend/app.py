@@ -1,6 +1,8 @@
 
-import asyncio, io, os, subprocess, logging, shlex, uuid
-from fastapi import FastAPI, WebSocket, UploadFile, File
+import asyncio, io, os, subprocess, logging, shlex, socket, uuid
+from contextlib import suppress
+from ipaddress import ip_address
+from fastapi import FastAPI, WebSocket, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +33,95 @@ _MAX_BACKGROUND_SIZE = 6 * 1024 * 1024  # 6 MB
 app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
 
 
+def _collect_non_loopback_addresses() -> list[str]:
+    """Returnera unika IP-adresser som kan nås inom samma nätverk."""
+
+    addresses: list[str] = []
+    seen: set[str] = set()
+
+    def add_address(raw: str | None) -> None:
+        if not raw:
+            return
+        candidate = raw.strip()
+        if not candidate:
+            return
+        candidate = candidate.split("%", 1)[0]
+        with suppress(ValueError):
+            parsed = ip_address(candidate)
+            if parsed.is_loopback or parsed.is_unspecified:
+                return
+            key = parsed.compressed
+            if key in seen:
+                return
+            seen.add(key)
+            addresses.append(key)
+
+    try:
+        output = subprocess.check_output(
+            ["ip", "-o", "addr", "show", "scope", "global"],
+            text=True,
+        )
+    except Exception:  # pragma: no cover - saknar ip-kommandot eller annat fel
+        output = ""
+
+    if output:
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                ip_with_prefix = parts[3]
+                addr = ip_with_prefix.split("/", 1)[0]
+                add_address(addr)
+
+    hostnames = {socket.gethostname(), socket.getfqdn()}
+    for name in hostnames:
+        if not name or name.lower() == "localhost":
+            continue
+        with suppress(socket.gaierror):
+            resolved = socket.gethostbyname_ex(name)[2]
+            for addr in resolved:
+                add_address(addr)
+
+    with suppress(OSError):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            addr = sock.getsockname()[0]
+            add_address(addr)
+
+    add_address(HOST)
+
+    return addresses
+
+
+def _unique(sequence: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique_items: list[str] = []
+    for item in sequence:
+        if not item:
+            continue
+        lowered = item.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique_items.append(item)
+    return unique_items
+
+
+def _format_base_url(host: str, scheme: str, port: int) -> str:
+    host_part = host.strip()
+    if not host_part:
+        host_part = "localhost"
+    bare_host = host_part.split("%", 1)[0]
+    url_host = bare_host
+    with suppress(ValueError):
+        parsed = ip_address(bare_host)
+        if parsed.version == 6:
+            url_host = f"[{parsed.compressed}]"
+        else:
+            url_host = parsed.compressed
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    port_suffix = "" if default_port else f":{port}"
+    return f"{scheme}://{url_host}{port_suffix}"
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "index.html"))
@@ -44,6 +135,56 @@ async def display_page() -> FileResponse:
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page() -> FileResponse:
     return FileResponse(os.path.join(static_dir, "admin.html"))
+
+
+@app.get("/api/network/lan-info")
+async def lan_info(request: Request) -> JSONResponse:
+    scheme = request.url.scheme or "http"
+    request_port = request.url.port
+    port = PORT or request_port or (443 if scheme == "https" else 80)
+
+    discovered_addresses = _collect_non_loopback_addresses()
+    request_host = request.url.hostname or ""
+
+    hostname_candidates = [request_host, socket.gethostname(), socket.getfqdn()]
+    extra_hostnames: list[str] = []
+    for name in hostname_candidates:
+        if not name:
+            continue
+        clean = name.strip()
+        if not clean or clean.lower() == "localhost":
+            continue
+        extra_hostnames.append(clean)
+        if "." not in clean:
+            extra_hostnames.append(f"{clean}.local")
+
+    base_hosts = _unique(discovered_addresses + extra_hostnames + ["localhost"])
+    base_urls = [_format_base_url(host, scheme, port) for host in base_hosts]
+
+    if not base_urls:
+        base_urls = [_format_base_url("localhost", scheme, port)]
+
+    admin_urls = [f"{url}/admin" for url in base_urls]
+    display_urls = [f"{url}/display" for url in base_urls]
+
+    note = (
+        "Öppna länkarna från en annan dator, platta eller mobil på samma nätverk."
+        if discovered_addresses
+        else "Inga nätverksadresser hittades automatiskt – använd adressen du redan anslutit med eller kontrollera nätverket."
+    )
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "scheme": scheme,
+            "port": port,
+            "lanAddresses": discovered_addresses,
+            "baseUrls": base_urls,
+            "adminUrls": admin_urls,
+            "displayUrls": display_urls,
+            "note": note,
+        }
+    )
 
 
 @app.get("/rag")
