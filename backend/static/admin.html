@@ -144,10 +144,67 @@
       margin-top: 8px;
       opacity: 0.75;
     }
+    .lan-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .lan-group h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .link-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .link-item {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(19, 36, 63, 0.9);
+      border: 1px solid rgba(62, 96, 146, 0.55);
+    }
+    .link-item a {
+      color: #9bc9ff;
+      font-weight: 600;
+      text-decoration: none;
+      word-break: break-all;
+      flex: 1 1 220px;
+    }
+    .link-item a:hover {
+      text-decoration: underline;
+    }
+    .copy-btn {
+      background: rgba(30, 55, 94, 0.95);
+      border: 1px solid rgba(90, 128, 185, 0.7);
+      color: #eef2ff;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    .copy-btn:active {
+      transform: scale(0.97);
+    }
     @media (max-width: 720px) {
       .wrap { padding: 24px 16px 40px; }
       header { justify-content: center; }
       .btn { width: 100%; }
+      .link-item {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .copy-btn {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -235,6 +292,21 @@
       <div class="status" id="appearance-status">Inställningarna gäller för startsidan.</div>
     </div>
 
+    <div class="card" id="lan-card">
+      <div>
+        <h2>Öppna från andra enheter</h2>
+        <p class="helper" id="lan-status">Söker tillgängliga adresser på nätverket ...</p>
+      </div>
+      <div class="lan-group" aria-live="polite">
+        <h3>Administration</h3>
+        <ul class="link-list" id="lan-admin-list"></ul>
+      </div>
+      <div class="lan-group" aria-live="polite">
+        <h3>Visningsläge</h3>
+        <ul class="link-list" id="lan-display-list"></ul>
+      </div>
+    </div>
+
     <div class="card">
       <div>
         <h2>Hantera kunskapsbas (RAG)</h2>
@@ -280,7 +352,12 @@
     const ragReset = document.getElementById('rag-reset');
     const statusEl = document.getElementById('status');
     const log = document.getElementById('log');
+    const lanStatus = document.getElementById('lan-status');
+    const lanAdminList = document.getElementById('lan-admin-list');
+    const lanDisplayList = document.getElementById('lan-display-list');
     const backgroundUploadDefaultText = backgroundUploadFeedback ? backgroundUploadFeedback.textContent : '';
+    let lanStatusDefault = lanStatus ? lanStatus.textContent : '';
+    const clipboardAvailable = !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
 
     const defaultSettings = {
       assistantName: 'Pi5 Röstassistent',
@@ -290,6 +367,106 @@
       secondaryButtonColor: '#13233d',
       buttonTextColor: '#ffffff'
     };
+
+    function setLanStatus(text, persist = false){
+      if(!lanStatus){
+        return;
+      }
+      lanStatus.textContent = text;
+      if(persist){
+        lanStatusDefault = text;
+      }
+    }
+
+    function flashLanStatus(text){
+      if(!lanStatus){
+        return;
+      }
+      lanStatus.textContent = text;
+      window.setTimeout(() => {
+        if(lanStatus){
+          lanStatus.textContent = lanStatusDefault || '';
+        }
+      }, 3200);
+    }
+
+    function renderLanLinks(urls, listEl){
+      if(!listEl){
+        return;
+      }
+      listEl.innerHTML = '';
+      const safeUrls = Array.isArray(urls) ? urls : [];
+      if(!safeUrls.length){
+        const emptyItem = document.createElement('li');
+        emptyItem.className = 'link-item';
+        emptyItem.textContent = 'Inga adresser hittades.';
+        listEl.appendChild(emptyItem);
+        return;
+      }
+
+      safeUrls.forEach((url) => {
+        const item = document.createElement('li');
+        item.className = 'link-item';
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        anchor.textContent = url;
+        item.appendChild(anchor);
+
+        if(clipboardAvailable){
+          const copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.className = 'copy-btn';
+          copyBtn.textContent = 'Kopiera';
+          copyBtn.addEventListener('click', async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              flashLanStatus('Länken kopierades till urklipp.');
+            } catch (err) {
+              console.error('Kunde inte kopiera länken', err);
+              flashLanStatus('Kunde inte kopiera länken.');
+            }
+          });
+          item.appendChild(copyBtn);
+        }
+
+        listEl.appendChild(item);
+      });
+    }
+
+    async function loadLanLinks(){
+      if(!lanAdminList || !lanDisplayList){
+        return;
+      }
+      setLanStatus('Söker tillgängliga adresser på nätverket ...');
+      try {
+        const res = await fetch('/api/network/lan-info');
+        const data = await res.json();
+        if(res.ok && data && data.ok){
+          renderLanLinks(data.adminUrls || data.admin_urls || [], lanAdminList);
+          renderLanLinks(data.displayUrls || data.display_urls || [], lanDisplayList);
+          const lanAddresses = Array.isArray(data.lanAddresses) ? data.lanAddresses : [];
+          let message = typeof data.note === 'string' && data.note.trim()
+            ? data.note.trim()
+            : 'Öppna länkarna från en annan enhet på samma nätverk.';
+          if(!lanAddresses.length && (!Array.isArray(data.baseUrls) || !data.baseUrls.length)){
+            message = 'Kunde inte hitta några adresser automatiskt. Använd adressen du redan har öppnat.';
+          }
+          setLanStatus(message, true);
+        } else {
+          const errorText = data && data.error ? data.error : 'Kunde inte hämta nätverksadresser.';
+          setLanStatus(errorText, true);
+          renderLanLinks([], lanAdminList);
+          renderLanLinks([], lanDisplayList);
+        }
+      } catch (err) {
+        console.error('Kunde inte hämta nätverksinformation', err);
+        setLanStatus('Kunde inte hämta nätverksadresser.', true);
+        renderLanLinks([], lanAdminList);
+        renderLanLinks([], lanDisplayList);
+      }
+    }
 
     function updateNameFromBuilder(){
       const parts = [namePrefix.value.trim(), nameCore.value.trim(), nameSuffix.value.trim()].filter(Boolean);
@@ -516,6 +693,7 @@
       }
     });
 
+    loadLanLinks();
     loadSettings();
   </script>
 </body>
