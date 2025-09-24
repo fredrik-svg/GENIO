@@ -49,9 +49,9 @@ def _sounddevice_error():
 def _sounddevice_available() -> bool:
     return _sounddevice_error() is None
 
+from .audio_settings import get_selected_input_device
 from .config import (
     ENERGY_THRESHOLD,
-    INPUT_DEVICE,
     MAX_RECORD_SECONDS,
     SAMPLE_RATE,
     SILENCE_DURATION,
@@ -329,7 +329,7 @@ def record_until_silence() -> np.ndarray:
             pass
         q.put(indata.copy())
 
-    device = INPUT_DEVICE if INPUT_DEVICE else None
+    device = get_selected_input_device()
 
     has_device, message = _detect_input_device(device)
     if not has_device:
@@ -510,3 +510,94 @@ def play_wav_bytes(data: bytes) -> None:
 
     sd.play(audio, samplerate=sample_rate)
     sd.wait()
+
+
+def list_input_devices():
+    """Returnera (lista, felmeddelande)."""
+
+    error = _sounddevice_error()
+    if error is not None:
+        return [], f"sounddevice library unavailable: {error}"
+
+    try:
+        raw_devices = sd.query_devices()
+    except Exception as exc:  # pragma: no cover - defensiv loggning
+        logger.error("Could not query audio input devices: %s", exc)
+        return [], f"Kunde inte läsa ljudenheter: {exc}"
+
+    hostapi_names: dict[int, str] = {}
+    try:
+        raw_hostapis = sd.query_hostapis()
+    except Exception:  # pragma: no cover - saknar stöd för host API-lista
+        raw_hostapis = []
+    for idx, info in enumerate(raw_hostapis):
+        if isinstance(info, dict):
+            index_value = info.get("index", idx)
+            name_value = info.get("name")
+        else:
+            index_value = getattr(info, "index", idx)
+            name_value = getattr(info, "name", None)
+        try:
+            index_int = int(index_value)
+        except Exception:  # pragma: no cover - defensiv
+            continue
+        if not name_value:
+            continue
+        hostapi_names[index_int] = str(name_value)
+
+    default_input_index = None
+    try:
+        default_device = getattr(getattr(sd, "default", None), "device", None)
+        if isinstance(default_device, (tuple, list)) and default_device:
+            default_input_index = int(default_device[0])
+        elif isinstance(default_device, (int, float)):
+            default_input_index = int(default_device)
+    except Exception:  # pragma: no cover - defensiv
+        default_input_index = None
+
+    devices: list[dict[str, object]] = []
+    for idx, info in enumerate(raw_devices):
+        if isinstance(info, dict):
+            channels = info.get("max_input_channels")
+            index_value = info.get("index", idx)
+            name_value = info.get("name")
+            default_rate = info.get("default_samplerate")
+            hostapi_index = info.get("hostapi")
+        else:
+            channels = getattr(info, "max_input_channels", None)
+            index_value = getattr(info, "index", idx)
+            name_value = getattr(info, "name", None)
+            default_rate = getattr(info, "default_samplerate", None)
+            hostapi_index = getattr(info, "hostapi", None)
+
+        if not isinstance(channels, (int, float)) or channels <= 0:
+            continue
+
+        try:
+            index_int = int(index_value)
+        except Exception:
+            index_int = idx
+
+        sample_rate = None
+        if isinstance(default_rate, (int, float)) and math.isfinite(float(default_rate)):
+            sample_rate = float(default_rate)
+
+        hostapi_name = None
+        if isinstance(hostapi_index, (int, float)):
+            hostapi_name = hostapi_names.get(int(hostapi_index))
+
+        name_str = str(name_value) if name_value else f"Enhet {index_int}"
+
+        entry = {
+            "index": index_int,
+            "name": name_str,
+            "maxInputChannels": int(channels),
+            "defaultSampleRate": sample_rate,
+            "hostapi": hostapi_name,
+            "isDefault": default_input_index is not None and index_int == default_input_index,
+            "value": f"index:{index_int}",
+        }
+
+        devices.append(entry)
+
+    return devices, None

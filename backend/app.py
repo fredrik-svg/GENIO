@@ -7,12 +7,20 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
 
-from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH
-from .audio import record_until_silence, save_wav_mono16, play_wav_bytes
+from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH, INPUT_DEVICE
+from .audio import record_until_silence, save_wav_mono16, play_wav_bytes, list_input_devices
 from .openai_client import stt_transcribe_wav, tts_speak_sv
 from .wakeword import WakeWordListener
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
 from .ui_settings import load_ui_settings, save_ui_settings, UISettings
+from .audio_settings import (
+    extract_index,
+    extract_manual_value,
+    get_raw_input_device_selection,
+    get_selected_input_device,
+    serialize_device_spec,
+    set_selected_input_device,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +129,93 @@ def _format_base_url(host: str, scheme: str, port: int) -> str:
     default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
     port_suffix = "" if default_port else f":{port}"
     return f"{scheme}://{url_host}{port_suffix}"
+
+
+def _format_device_display(spec: str | int | None, devices: list[dict[str, object]]) -> str:
+    if spec is None:
+        return "Systemets standard"
+
+    if isinstance(spec, int):
+        for device in devices:
+            try:
+                device_index = int(device.get("index"))  # type: ignore[arg-type]
+            except Exception:
+                continue
+            if device_index == spec:
+                name = device.get("name")
+                name_str = str(name) if name else f"Enhet {spec}"
+                return f"{name_str} (index {spec})"
+        return f"Ljudenhet index {spec}"
+
+    return str(spec)
+
+
+def _audio_devices_payload():
+    devices, devices_error = list_input_devices()
+
+    stored_raw = get_raw_input_device_selection()
+    manual_value = extract_manual_value(stored_raw)
+    selected_option = "auto"
+    if stored_raw:
+        if stored_raw.startswith("manual:"):
+            selected_option = "manual"
+        else:
+            selected_option = stored_raw
+
+    effective_spec = get_selected_input_device()
+    fallback_env = (INPUT_DEVICE or "").strip()
+    effective_display = _format_device_display(effective_spec, devices)
+    effective_serialized = serialize_device_spec(effective_spec)
+
+    if stored_raw:
+        effective_source = "stored"
+    elif fallback_env:
+        effective_source = "env"
+    else:
+        effective_source = "system"
+
+    selected_available = True
+    selected_index = extract_index(stored_raw)
+    if selected_index is not None:
+        selected_available = any(
+            isinstance(device.get("index"), (int, float))
+            and int(device.get("index")) == selected_index
+            for device in devices
+        )
+    elif stored_raw and selected_option not in {"auto", "manual"}:
+        selected_available = any(stored_raw == device.get("value") for device in devices)
+
+    message = "Ingen specifik ljudkälla vald – systemets standard används."
+    if effective_source == "stored" and stored_raw:
+        message = f"Aktiv ljudkälla: {effective_display}."
+    elif effective_source == "env" and fallback_env:
+        message = f"Aktiv ljudkälla via miljövariabel: {effective_display}."
+    elif effective_source == "system":
+        message = "Ingen specifik ljudkälla vald – systemets standard används."
+
+    if devices_error:
+        message = devices_error
+    elif not selected_available and stored_raw:
+        message = f"{message.rstrip('.')} (tidigare vald enhet hittades inte)."
+
+    payload: dict[str, object] = {
+        "devices": devices,
+        "devicesOk": devices_error is None,
+        "selected": stored_raw,
+        "selectedOption": selected_option,
+        "selectedAvailable": selected_available,
+        "manualValue": manual_value,
+        "effective": effective_serialized,
+        "effectiveDisplay": effective_display,
+        "effectiveSource": effective_source,
+        "fallback": fallback_env,
+        "message": message,
+    }
+
+    if devices_error:
+        payload["devicesError"] = devices_error
+
+    return payload, devices_error
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> FileResponse:
@@ -324,6 +419,11 @@ class AskPayload(BaseModel):
     question: str
 
 
+class AudioInputSettingsPayload(BaseModel):
+    input_device: str | None = Field(default=None, alias="inputDevice")
+    manual_value: str | None = Field(default=None, alias="manualValue")
+
+
 @app.post("/api/ask")
 async def ask(payload: AskPayload):
     question = (payload.question or "").strip()
@@ -353,6 +453,43 @@ async def ask(payload: AskPayload):
             "contexts": rag.contexts_for_client(),
         }
     )
+
+
+@app.get("/api/audio/input-devices")
+async def get_audio_input_devices():
+    payload, error = _audio_devices_payload()
+    devices_ok = bool(payload.get("devicesOk"))
+    payload["ok"] = devices_ok
+    if error and "error" not in payload:
+        payload["error"] = error
+    status_code = 200 if devices_ok else 503
+    return JSONResponse(payload, status_code=status_code)
+
+
+@app.post("/api/audio/settings")
+async def update_audio_settings(payload: AudioInputSettingsPayload):
+    choice = (payload.input_device or "").strip()
+    manual_value = (payload.manual_value or "").strip()
+
+    if choice == "manual":
+        selection = f"manual:{manual_value}"
+    elif not choice or choice.lower() in {"auto", "default"}:
+        selection = ""
+    elif choice.startswith("manual:") and manual_value:
+        selection = f"manual:{manual_value}"
+    else:
+        selection = choice
+
+    try:
+        set_selected_input_device(selection)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+
+    payload_data, devices_error = _audio_devices_payload()
+    payload_data["ok"] = True
+    if devices_error and "devicesError" not in payload_data:
+        payload_data["devicesError"] = devices_error
+    return JSONResponse(payload_data)
 
 
 class RAGIngestPayload(BaseModel):

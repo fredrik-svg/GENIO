@@ -307,6 +307,33 @@
       </div>
     </div>
 
+    <div class="card" id="audio-card">
+      <div>
+        <h2>Välj ljudkälla</h2>
+        <p class="helper">Välj vilken mikrofon backend ska använda för inspelning.</p>
+      </div>
+      <form id="audio-form">
+        <div class="field">
+          <label for="audio-input-select">Inspelningskälla</label>
+          <select id="audio-input-select" name="input-device">
+            <option value="auto">Systemets standard</option>
+            <option value="manual">Ange manuellt värde ...</option>
+          </select>
+          <small>Om din mikrofon inte visas kan du ange namn eller index manuellt.</small>
+        </div>
+        <div class="field" id="audio-custom-field" style="display:none;">
+          <label for="audio-custom-input">Manuell ljudkälla</label>
+          <input id="audio-custom-input" name="audio-custom-input" type="text" placeholder="t.ex. hw:2,0" />
+          <small>Ange exakt namn, index eller ALSA-sträng.</small>
+        </div>
+        <div class="grid">
+          <button class="btn secondary" type="button" id="audio-refresh">Uppdatera lista</button>
+          <button class="btn" type="submit" id="audio-save">Spara ljudkälla</button>
+        </div>
+      </form>
+      <div class="status" id="audio-status">Ingen specifik ljudkälla vald – systemets standard används.</div>
+    </div>
+
     <div class="card">
       <div>
         <h2>Hantera kunskapsbas (RAG)</h2>
@@ -355,6 +382,12 @@
     const lanStatus = document.getElementById('lan-status');
     const lanAdminList = document.getElementById('lan-admin-list');
     const lanDisplayList = document.getElementById('lan-display-list');
+    const audioForm = document.getElementById('audio-form');
+    const audioSelect = document.getElementById('audio-input-select');
+    const audioManualField = document.getElementById('audio-custom-field');
+    const audioManualInput = document.getElementById('audio-custom-input');
+    const audioRefreshBtn = document.getElementById('audio-refresh');
+    const audioStatus = document.getElementById('audio-status');
     const backgroundUploadDefaultText = backgroundUploadFeedback ? backgroundUploadFeedback.textContent : '';
     let lanStatusDefault = lanStatus ? lanStatus.textContent : '';
     const clipboardAvailable = !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
@@ -388,6 +421,160 @@
           lanStatus.textContent = lanStatusDefault || '';
         }
       }, 3200);
+    }
+
+    function toggleAudioManualField(show){
+      if(!audioManualField){
+        return;
+      }
+      audioManualField.style.display = show ? '' : 'none';
+    }
+
+    function manualValueFromRaw(raw){
+      if(typeof raw !== 'string'){
+        return '';
+      }
+      if(raw.startsWith('manual:')){
+        return raw.slice(7).trim();
+      }
+      return '';
+    }
+
+    function determineAudioOption(raw, fallback){
+      if(typeof raw === 'string'){
+        const trimmed = raw.trim();
+        if(trimmed){
+          if(trimmed.startsWith('manual:')){
+            return 'manual';
+          }
+          return trimmed;
+        }
+      }
+      return fallback || 'auto';
+    }
+
+    function populateAudioSelectOptions(devices, selectedRaw, selectedOption){
+      if(!audioSelect){
+        return;
+      }
+
+      const safeDevices = Array.isArray(devices) ? devices : [];
+      const raw = typeof selectedRaw === 'string' ? selectedRaw : '';
+      const option = typeof selectedOption === 'string' && selectedOption.trim()
+        ? selectedOption.trim()
+        : null;
+      const manualValue = manualValueFromRaw(raw);
+      const targetValue = option || determineAudioOption(raw, 'auto');
+
+      audioSelect.innerHTML = '';
+
+      const autoOption = document.createElement('option');
+      autoOption.value = 'auto';
+      autoOption.textContent = 'Systemets standard';
+      audioSelect.appendChild(autoOption);
+
+      const manualOption = document.createElement('option');
+      manualOption.value = 'manual';
+      manualOption.textContent = 'Ange manuellt värde ...';
+      audioSelect.appendChild(manualOption);
+
+      safeDevices.forEach((device) => {
+        const optionEl = document.createElement('option');
+        const value = typeof device.value === 'string' && device.value.trim()
+          ? device.value.trim()
+          : `index:${device.index}`;
+        optionEl.value = value;
+
+        let label = '';
+        if(typeof device.name === 'string' && device.name.trim()){
+          label = device.name.trim();
+        } else if(typeof device.index === 'number'){
+          label = `Enhet ${device.index}`;
+        } else {
+          label = value;
+        }
+
+        const channels = typeof device.maxInputChannels === 'number' ? device.maxInputChannels : null;
+        if(channels && channels > 0){
+          label += ` – ${channels} kanal${channels === 1 ? '' : 'er'}`;
+        }
+
+        const hostapi = typeof device.hostapi === 'string' && device.hostapi.trim() ? device.hostapi.trim() : '';
+        if(hostapi){
+          label += ` (${hostapi})`;
+        }
+
+        if(device.isDefault){
+          label += ' (systemstandard)';
+        }
+
+        optionEl.textContent = label;
+        audioSelect.appendChild(optionEl);
+      });
+
+      if(targetValue && targetValue !== 'auto' && targetValue !== 'manual'){
+        const hasTarget = safeDevices.some((device) => {
+          const value = typeof device.value === 'string' && device.value.trim()
+            ? device.value.trim()
+            : `index:${device.index}`;
+          return value === targetValue;
+        });
+        if(!hasTarget){
+          const fallbackOption = document.createElement('option');
+          fallbackOption.value = targetValue;
+          fallbackOption.textContent = `Tidigare vald: ${targetValue}`;
+          fallbackOption.dataset.missing = '1';
+          audioSelect.appendChild(fallbackOption);
+        }
+      }
+
+      audioSelect.value = targetValue || 'auto';
+      if(audioSelect.value !== (targetValue || 'auto')){
+        audioSelect.value = targetValue === 'manual' ? 'manual' : 'auto';
+      }
+
+      toggleAudioManualField(audioSelect.value === 'manual');
+      if(audioManualInput){
+        audioManualInput.value = manualValue;
+      }
+    }
+
+    function setAudioStatus(text){
+      if(!audioStatus){
+        return;
+      }
+      audioStatus.textContent = text;
+    }
+
+    async function loadAudioDevices(showLoading = true){
+      if(!audioForm || !audioSelect){
+        return;
+      }
+      if(audioStatus && showLoading){
+        setAudioStatus('Hämtar ljudenheter ...');
+      }
+      try {
+        const res = await fetch('/api/audio/input-devices');
+        const data = await res.json();
+        const devices = data && Array.isArray(data.devices) ? data.devices : [];
+        const selectedRaw = data && typeof data.selected === 'string' ? data.selected : '';
+        const selectedOption = data && typeof data.selectedOption === 'string' ? data.selectedOption : undefined;
+        populateAudioSelectOptions(devices, selectedRaw, selectedOption);
+        if(audioStatus){
+          if(data && typeof data.message === 'string' && data.message.trim()){
+            audioStatus.textContent = data.message;
+          } else if(res.ok){
+            audioStatus.textContent = 'Ljudenheter uppdaterade.';
+          } else {
+            audioStatus.textContent = data && typeof data.error === 'string' ? data.error : 'Kunde inte hämta ljudenheter.';
+          }
+        }
+      } catch (err) {
+        if(audioStatus){
+          audioStatus.textContent = 'Kunde inte hämta ljudenheter.';
+        }
+        console.error('Kunde inte hämta ljudenheter', err);
+      }
     }
 
     function renderLanLinks(urls, listEl){
@@ -576,6 +763,89 @@
       updateNamePreview();
     }
 
+    toggleAudioManualField(audioSelect && audioSelect.value === 'manual');
+
+    if(audioSelect){
+      audioSelect.addEventListener('change', () => {
+        const isManual = audioSelect.value === 'manual';
+        toggleAudioManualField(isManual);
+        if(isManual && audioManualInput){
+          audioManualInput.focus();
+        }
+      });
+    }
+
+    if(audioRefreshBtn){
+      audioRefreshBtn.addEventListener('click', () => {
+        loadAudioDevices(false);
+      });
+    }
+
+    if(audioForm){
+      audioForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        if(!audioSelect){
+          return;
+        }
+
+        const choice = audioSelect.value;
+        let manualValue = '';
+        if(choice === 'manual'){
+          manualValue = audioManualInput ? audioManualInput.value.trim() : '';
+          if(!manualValue){
+            if(audioStatus){
+              audioStatus.textContent = 'Ange en manuell ljudkälla.';
+            }
+            if(audioManualInput){
+              audioManualInput.focus();
+            }
+            return;
+          }
+        } else if(choice.startsWith('manual:')){
+          manualValue = audioManualInput ? audioManualInput.value.trim() : '';
+        }
+
+        if(audioStatus){
+          audioStatus.textContent = 'Sparar ljudkälla ...';
+        }
+
+        try {
+          const res = await fetch('/api/audio/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              inputDevice: choice,
+              manualValue: manualValue
+            })
+          });
+          const data = await res.json();
+          if(res.ok && data){
+            const devices = Array.isArray(data.devices) ? data.devices : [];
+            const selectedRaw = typeof data.selected === 'string' ? data.selected : '';
+            const selectedOption = typeof data.selectedOption === 'string' ? data.selectedOption : undefined;
+            populateAudioSelectOptions(devices, selectedRaw, selectedOption);
+            if(audioStatus){
+              if(typeof data.message === 'string' && data.message.trim()){
+                audioStatus.textContent = data.message;
+              } else {
+                audioStatus.textContent = 'Ljudkälla sparad.';
+              }
+            }
+          } else {
+            if(audioStatus){
+              const errMsg = data && typeof data.error === 'string' ? data.error : 'Kunde inte spara ljudkälla.';
+              audioStatus.textContent = errMsg;
+            }
+          }
+        } catch (err) {
+          if(audioStatus){
+            audioStatus.textContent = 'Ett fel inträffade vid sparande av ljudkälla.';
+          }
+          console.error('Kunde inte spara ljudkälla', err);
+        }
+      });
+    }
+
     appearanceForm.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const payload = {
@@ -693,6 +963,7 @@
       }
     });
 
+    loadAudioDevices();
     loadLanLinks();
     loadSettings();
   </script>

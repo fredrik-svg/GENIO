@@ -13,6 +13,9 @@ except ImportError:  # pragma: no cover - optional dependency on Pi
     pvporcupine = None  # type: ignore[assignment]
 
 
+from .audio_settings import get_selected_input_device
+
+
 DEFAULT_PORCUPINE_KEYWORDS: Tuple[str, ...] = ("porcupine",)
 
 logger = logging.getLogger(__name__)
@@ -150,6 +153,7 @@ class WakeWordListener:
 
         def open_stream():
             stream = sd.InputStream(
+                device=get_selected_input_device(),
                 channels=1,
                 samplerate=samplerate,
                 blocksize=blocksize,
