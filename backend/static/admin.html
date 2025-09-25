@@ -534,14 +534,18 @@
         manualField: document.getElementById('assistant-display-manual-field'),
         manualInput: document.getElementById('assistant-display-manual'),
         status: document.getElementById('assistant-display-status'),
-        defaultStatus: 'Assistenten använder systemets standarddisplay.'
+        defaultStatus: 'Assistenten använder systemets standarddisplay.',
+        manualOption: null,
+        manualDefaultLabel: ''
       },
       display: {
         select: document.getElementById('presentation-display-select'),
         manualField: document.getElementById('presentation-display-manual-field'),
         manualInput: document.getElementById('presentation-display-manual'),
         status: document.getElementById('presentation-display-status'),
-        defaultStatus: 'Visningsläget använder systemets standarddisplay.'
+        defaultStatus: 'Visningsläget använder systemets standarddisplay.',
+        manualOption: null,
+        manualDefaultLabel: ''
       }
     };
     const displayTargetsState = { list: [] };
@@ -766,10 +770,38 @@
       displayTargetsContent.appendChild(list);
     }
 
-    function populateDisplayOptions(selectEl){
-      if(!selectEl){
+    function formatManualLabel(value){
+      if(typeof value !== 'string'){
+        return '';
+      }
+      const trimmed = value.trim();
+      if(trimmed.length <= 48){
+        return trimmed;
+      }
+      return `${trimmed.slice(0, 45)}…`;
+    }
+
+    function updateManualOptionLabel(ctrl, manualValue){
+      if(!ctrl || !ctrl.manualOption){
         return;
       }
+      const defaultLabel = ctrl.manualDefaultLabel || 'Ange manuellt värde ...';
+      const trimmed = typeof manualValue === 'string' ? manualValue.trim() : '';
+      if(trimmed){
+        const formatted = formatManualLabel(trimmed);
+        ctrl.manualOption.textContent = `Manuellt värde – ${formatted}`;
+        ctrl.manualOption.title = trimmed;
+      } else {
+        ctrl.manualOption.textContent = defaultLabel;
+        ctrl.manualOption.removeAttribute('title');
+      }
+    }
+
+    function populateDisplayOptions(ctrl){
+      if(!ctrl || !ctrl.select){
+        return;
+      }
+      const selectEl = ctrl.select;
       const previousValue = selectEl.value;
       selectEl.innerHTML = '';
 
@@ -780,8 +812,13 @@
 
       const manualOption = document.createElement('option');
       manualOption.value = 'manual';
-      manualOption.textContent = 'Ange manuellt värde ...';
+      const defaultLabel = ctrl.manualDefaultLabel || 'Ange manuellt värde ...';
+      manualOption.textContent = defaultLabel;
       selectEl.appendChild(manualOption);
+      ctrl.manualOption = manualOption;
+      if(!ctrl.manualDefaultLabel){
+        ctrl.manualDefaultLabel = defaultLabel;
+      }
 
       const targets = Array.isArray(displayTargetsState.list) ? displayTargetsState.list : [];
       targets.forEach((target) => {
@@ -809,6 +846,15 @@
         selectEl.value = previousValue;
       } else {
         selectEl.value = 'auto';
+      }
+
+      if(ctrl.manualInput){
+        const manualCurrent = ctrl.select.value === 'manual'
+          ? ctrl.manualInput.value.trim()
+          : '';
+        updateManualOptionLabel(ctrl, manualCurrent);
+      } else {
+        updateManualOptionLabel(ctrl, '');
       }
     }
 
@@ -855,6 +901,10 @@
           } else {
             ctrl.manualInput.value = ctrl.select.value;
           }
+          const manualLabelValue = ctrl.select.value === 'manual'
+            ? (storedRaw || ctrl.manualInput.value || '')
+            : '';
+          updateManualOptionLabel(ctrl, manualLabelValue);
         }
 
         if(ctrl.status){
@@ -911,7 +961,7 @@
 
       Object.values(displayControls).forEach((ctrl) => {
         if(ctrl && ctrl.select){
-          populateDisplayOptions(ctrl.select);
+          populateDisplayOptions(ctrl);
         }
       });
 
@@ -1320,6 +1370,12 @@
       if(!ctrl || !ctrl.select){
         return;
       }
+      const manualOption = ctrl.select ? ctrl.select.querySelector('option[value="manual"]') : null;
+      if(manualOption && !ctrl.manualOption){
+        ctrl.manualOption = manualOption;
+        ctrl.manualDefaultLabel = manualOption.textContent;
+      }
+
       ctrl.select.addEventListener('change', () => {
         const value = ctrl.select.value;
         toggleDisplayManualField(ctrl.manualField, value === 'manual');
@@ -1328,14 +1384,28 @@
             if(!ctrl.manualInput.value){
               ctrl.manualInput.focus();
             }
+            updateManualOptionLabel(ctrl, ctrl.manualInput.value.trim());
           } else if(value === 'auto'){
             ctrl.manualInput.value = '';
+            updateManualOptionLabel(ctrl, '');
           } else {
             ctrl.manualInput.value = value;
+            updateManualOptionLabel(ctrl, '');
           }
         }
       });
       toggleDisplayManualField(ctrl.manualField, ctrl.select.value === 'manual');
+      if(ctrl.manualInput){
+        ctrl.manualInput.addEventListener('input', () => {
+          if(ctrl.select.value === 'manual'){
+            updateManualOptionLabel(ctrl, ctrl.manualInput.value.trim());
+          }
+        });
+      }
+      const initialManualValue = ctrl.select.value === 'manual' && ctrl.manualInput
+        ? ctrl.manualInput.value.trim()
+        : '';
+      updateManualOptionLabel(ctrl, initialManualValue);
     });
 
     if(displayRefreshBtn){
