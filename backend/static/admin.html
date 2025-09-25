@@ -636,21 +636,43 @@
         return '';
       }
 
+      const index = Number.isInteger(monitor.index) ? monitor.index : null;
+      const isPrimary = monitor.primary === true;
+      const isActive = monitor.active === true;
       const name = typeof monitor.name === 'string' ? monitor.name.trim() : '';
       const description = typeof monitor.description === 'string' ? monitor.description.trim() : '';
       const make = typeof monitor.make === 'string' ? monitor.make.trim() : '';
       const model = typeof monitor.model === 'string' ? monitor.model.trim() : '';
-      let label = name || description || `${make}${model ? ` ${model}` : ''}`.trim();
-      if(!label){
-        label = 'Skärm';
+
+      const baseName = name || description || `${make}${model ? ` ${model}` : ''}`.trim();
+      let labelCore = baseName;
+      if(index !== null){
+        if(labelCore){
+          labelCore = `Skärm ${index + 1}: ${labelCore}`;
+        } else {
+          labelCore = `Skärm ${index + 1}`;
+        }
       }
-      if(monitor.primary){
-        label = `${label} (primär)`;
+      if(!labelCore){
+        labelCore = 'Skärm';
+      }
+
+      const annotations = [];
+      if(isPrimary){
+        annotations.push('primär');
+      }
+      if(isActive && !isPrimary){
+        annotations.push('aktiv');
+      }
+
+      let label = labelCore;
+      if(annotations.length){
+        label = `${label} (${annotations.join(', ')})`;
       }
 
       const details = [];
       const makeModel = [make, model].filter(Boolean).join(' ');
-      if(makeModel && makeModel !== label){
+      if(makeModel && !label.includes(makeModel)){
         details.push(makeModel);
       }
       const width = typeof monitor.width === 'number' && monitor.width > 0 ? monitor.width : null;
@@ -667,7 +689,7 @@
       if(scale && scale !== 1){
         details.push(`skala ${scale}`);
       }
-      if(description && description !== label && !details.includes(description)){
+      if(description && description !== baseName && !details.includes(description)){
         details.push(description);
       }
 
