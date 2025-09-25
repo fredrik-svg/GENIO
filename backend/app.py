@@ -395,6 +395,11 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
     wav_reply = await tts_speak_sv(reply)
     wav_reply = ensure_wav_pcm16(wav_reply)
 
+    # Om en specifik ljudutgång valts ska sounddevice ta hand om uppspelningen
+    # eftersom externa kommandon (t.ex. aplay/paplay) alltid använder
+    # systemets standard. Då ignoreras användarens valda enhet.
+    prefer_sounddevice = get_selected_output_device() is not None
+
     # Spara och spela upp
     out_path = OUTPUT_WAV_PATH
     with open(out_path, "wb") as f:
@@ -402,7 +407,7 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
 
     played = False
     play_cmd = (PLAY_CMD or "").strip()
-    if play_cmd:
+    if play_cmd and not prefer_sounddevice:
         try:
             subprocess.run(shlex.split(play_cmd) + [out_path], check=True)
             played = True
