@@ -126,6 +126,28 @@ def test_open_stream_raises_last_error(monkeypatch):
     assert attempts  # should have tried fallback sample rates
 
 
+def test_open_stream_skips_unsupported_rates(monkeypatch):
+    attempts = []
+
+    def fake_open_stream(rate):
+        attempts.append(rate)
+        return f"stream-{rate}"
+
+    dummy_sd = _make_dummy_sd(query_result={"default_samplerate": None})
+    monkeypatch.setattr(audio, "sd", dummy_sd)
+
+    stream, rate = audio._open_stream_with_fallback(
+        fake_open_stream,
+        None,
+        {audio.SAMPLE_RATE},
+        supports_rate=lambda candidate: candidate == 32000,
+    )
+
+    assert stream == "stream-32000"
+    assert rate == 32000
+    assert attempts == [32000]
+
+
 def test_gather_handles_query_errors(monkeypatch):
     dummy_sd = _make_dummy_sd(query_result=None, query_exception=RuntimeError("no device"))
     monkeypatch.setattr(audio, "sd", dummy_sd)
