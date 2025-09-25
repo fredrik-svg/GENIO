@@ -163,11 +163,20 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
 
     env_display = os.getenv("DISPLAY", "")
     env_wayland = os.getenv("WAYLAND_DISPLAY", "")
+    runtime_dir = os.getenv("XDG_RUNTIME_DIR", "")
 
     if env_display:
         add_target(env_display, f"{env_display} (aktiv DISPLAY)", "env_display")
     if env_wayland:
         add_target(env_wayland, f"{env_wayland} (Wayland)", "env_wayland")
+
+    if runtime_dir:
+        try:
+            for entry in sorted(os.listdir(runtime_dir)):
+                if entry.startswith("wayland-"):
+                    add_target(entry, f"{entry} (Wayland)", "wayland_runtime")
+        except FileNotFoundError:
+            pass
 
     x11_dir = "/tmp/.X11-unix"
     try:
@@ -180,10 +189,65 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
     except FileNotFoundError:
         pass
 
-    def enrich_with_monitors(value: str) -> None:
-        entry = targets.get(value)
-        if entry is None or not value.startswith(":"):
-            return
+    x11_cache: dict[str, list[dict[str, Any]] | None] = {}
+    wayland_cache: dict[str, list[dict[str, Any]] | None] = {}
+
+    def _format_refresh(value: Any) -> str | None:
+        if isinstance(value, (int, float)):
+            refresh = float(value)
+            if refresh <= 0:
+                return None
+            if refresh > 1000:
+                refresh = refresh / 1000.0
+            return f"{refresh:.1f} Hz"
+        return None
+
+    def _format_wayland_label(value: str, monitors: list[dict[str, Any]]) -> str:
+        label_parts: list[str] = []
+        for monitor in monitors:
+            name = monitor.get("name") or monitor.get("description") or monitor.get("model")
+            name = str(name) if name else "Wayland-utgång"
+            details: list[str] = []
+            maker = " ".join(
+                part
+                for part in (
+                    monitor.get("make") if isinstance(monitor.get("make"), str) else None,
+                    monitor.get("model") if isinstance(monitor.get("model"), str) else None,
+                )
+                if part
+            )
+            if maker and maker not in name:
+                details.append(maker)
+            width = monitor.get("width")
+            height = monitor.get("height")
+            if isinstance(width, int) and isinstance(height, int):
+                details.append(f"{width}x{height}")
+            refresh_label = _format_refresh(monitor.get("refresh")) or _format_refresh(
+                monitor.get("refreshHz")
+            )
+            if refresh_label:
+                details.append(refresh_label)
+            scale = monitor.get("scale")
+            if isinstance(scale, (int, float)):
+                details.append(f"skala {scale}")
+            description = monitor.get("description")
+            if isinstance(description, str) and description and description not in details and description != name:
+                details.append(description)
+            if details:
+                label_parts.append(f"{name} ({', '.join(details)})")
+            else:
+                label_parts.append(name)
+        if label_parts:
+            return f"{value} – {', '.join(label_parts)}"
+        return value
+
+    def _discover_x11_monitors(value: str) -> list[dict[str, Any]] | None:
+        cached = x11_cache.get(value)
+        if cached is not None:
+            return cached
+        if not value.startswith(":"):
+            x11_cache[value] = []
+            return []
         env = os.environ.copy()
         env["DISPLAY"] = value
         try:
@@ -195,12 +259,14 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
             )
         except FileNotFoundError:
             warnings.append("xrandr saknas – kunde inte lista aktiva monitorer.")
-            return
+            x11_cache[value] = []
+            return []
         except subprocess.CalledProcessError as exc:
             message = exc.output.strip() if exc.output else str(exc)
             if message:
                 warnings.append(message)
-            return
+            x11_cache[value] = []
+            return []
 
         monitors: list[dict[str, Any]] = []
         for line in output.splitlines():
@@ -220,19 +286,133 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
                     "primary": "*" in flags,
                 }
             )
-        if monitors:
-            entry["monitors"] = monitors
-            label_parts: list[str] = []
-            for monitor in monitors:
-                monitor_name = monitor["name"]
-                if monitor.get("primary"):
-                    label_parts.append(f"{monitor_name} (primär)")
-                else:
-                    label_parts.append(monitor_name)
-            entry["label"] = f"{value} – {', '.join(label_parts)}"
+        x11_cache[value] = monitors
+        return monitors
+
+    def _discover_wayland_monitors(value: str, sources: list[str]) -> list[dict[str, Any]] | None:
+        cached = wayland_cache.get(value)
+        if cached is not None:
+            return cached
+        if not any("wayland" in source for source in sources):
+            wayland_cache[value] = []
+            return []
+        env = os.environ.copy()
+        if value:
+            env["WAYLAND_DISPLAY"] = value
+        try:
+            output = subprocess.check_output(
+                ["wayland-info", "--json"],
+                text=True,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        except FileNotFoundError:
+            warnings.append("wayland-info saknas – kunde inte lista Wayland-utgångar.")
+            wayland_cache[value] = []
+            return []
+        except subprocess.CalledProcessError as exc:
+            message = exc.output.strip() if exc.output else str(exc)
+            if message:
+                warnings.append(message)
+            wayland_cache[value] = []
+            return []
+
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError:
+            warnings.append("wayland-info gav ogiltig JSON – kunde inte tolka skärminformation.")
+            wayland_cache[value] = []
+            return []
+
+        globals_info = data.get("globals")
+        if not isinstance(globals_info, list):
+            wayland_cache[value] = []
+            return []
+
+        monitors: list[dict[str, Any]] = []
+        for index, item in enumerate(globals_info):
+            if not isinstance(item, dict):
+                continue
+            if item.get("interface") != "wl_output":
+                continue
+            output_info = item.get("output")
+            if not isinstance(output_info, dict):
+                continue
+            name = output_info.get("name")
+            description = output_info.get("description") if isinstance(output_info.get("description"), str) else None
+            make = output_info.get("make") if isinstance(output_info.get("make"), str) else None
+            model = output_info.get("model") if isinstance(output_info.get("model"), str) else None
+            scale = output_info.get("scale")
+            modes = output_info.get("modes")
+            current_mode: dict[str, Any] | None = None
+            if isinstance(modes, list):
+                for mode in modes:
+                    if not isinstance(mode, dict):
+                        continue
+                    flags = mode.get("flags")
+                    if isinstance(flags, list) and "current" in flags:
+                        current_mode = mode
+                        break
+                if current_mode is None and modes:
+                    first_mode = modes[0]
+                    if isinstance(first_mode, dict):
+                        current_mode = first_mode
+
+            width = current_mode.get("width") if isinstance(current_mode, dict) else None
+            height = current_mode.get("height") if isinstance(current_mode, dict) else None
+            refresh = current_mode.get("refresh") if isinstance(current_mode, dict) else None
+            refresh_hz = None
+            if isinstance(refresh, (int, float)):
+                refresh_hz = float(refresh)
+                if refresh_hz > 1000:
+                    refresh_hz = refresh_hz / 1000.0
+
+            monitors.append(
+                {
+                    "index": index,
+                    "name": name if isinstance(name, str) else None,
+                    "description": description,
+                    "make": make,
+                    "model": model,
+                    "scale": scale,
+                    "width": width if isinstance(width, int) else None,
+                    "height": height if isinstance(height, int) else None,
+                    "refresh": refresh,
+                    "refreshHz": refresh_hz,
+                    "active": current_mode is not None,
+                }
+            )
+
+        wayland_cache[value] = monitors
+        return monitors
 
     for candidate in list(order):
-        enrich_with_monitors(candidate)
+        entry = targets.get(candidate)
+        if not entry:
+            continue
+        sources = [s for s in entry.get("sources", []) if isinstance(s, str)]
+        monitors: list[dict[str, Any]] = []
+        x11_monitors = _discover_x11_monitors(candidate)
+        if x11_monitors:
+            monitors = x11_monitors
+            names: list[str] = []
+            for monitor in x11_monitors:
+                monitor_name = monitor.get("name")
+                if not monitor_name:
+                    continue
+                if monitor.get("primary"):
+                    names.append(f"{monitor_name} (primär)")
+                else:
+                    names.append(str(monitor_name))
+            if names:
+                entry["label"] = f"{candidate} – {', '.join(names)}"
+        else:
+            wayland_monitors = _discover_wayland_monitors(candidate, sources)
+            if wayland_monitors:
+                monitors = wayland_monitors
+                entry["label"] = _format_wayland_label(candidate, wayland_monitors)
+        if monitors:
+            entry["monitors"] = monitors
 
     result = [targets[value] for value in order]
     for entry in result:

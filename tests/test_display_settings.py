@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 
@@ -48,6 +49,7 @@ def test_describe_display_settings_uses_stored(monkeypatch):
 def test_discover_display_targets(monkeypatch):
     monkeypatch.setenv("DISPLAY", ":99")
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
 
     def fake_listdir(path):
         assert path == "/tmp/.X11-unix"
@@ -69,3 +71,60 @@ def test_discover_display_targets(monkeypatch):
     assert ":0" in values
     zero_entry = next(entry for entry in targets if entry["value"] == ":0")
     assert "HDMI-1" in zero_entry["label"]
+    assert zero_entry["monitors"][0]["name"] == "HDMI-1"
+
+
+def test_discover_display_targets_wayland(monkeypatch):
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/fake-runtime")
+
+    def fake_listdir(path):
+        if path == "/fake-runtime":
+            return ["wayland-1"]
+        if path == "/tmp/.X11-unix":
+            raise FileNotFoundError
+        raise AssertionError(f"Unexpected listdir path: {path}")
+
+    def fake_check_output(cmd, text, stderr, env):  # noqa: ARG001
+        if cmd and cmd[0] == "wayland-info":
+            assert env.get("WAYLAND_DISPLAY") == "wayland-1"
+            return json.dumps(
+                {
+                    "globals": [
+                        {
+                            "interface": "wl_output",
+                            "output": {
+                                "name": "WL-1",
+                                "make": "Make",
+                                "model": "Model",
+                                "description": "Desk Monitor",
+                                "scale": 2,
+                                "modes": [
+                                    {
+                                        "width": 1920,
+                                        "height": 1080,
+                                        "refresh": 60000,
+                                        "flags": ["current", "preferred"],
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                }
+            )
+        raise FileNotFoundError
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+    monkeypatch.setattr(display_settings.subprocess, "check_output", fake_check_output)
+
+    targets, warnings = display_settings.discover_display_targets()
+
+    assert warnings == []
+    wayland_entry = next(entry for entry in targets if entry["value"] == "wayland-1")
+    assert wayland_entry["monitors"]
+    monitor = wayland_entry["monitors"][0]
+    assert monitor["name"] == "WL-1"
+    assert monitor["width"] == 1920
+    assert "WL-1" in wayland_entry["label"]
+    assert "1920x1080" in wayland_entry["label"]
