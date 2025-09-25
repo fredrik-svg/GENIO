@@ -23,6 +23,19 @@ def test_normalize_input_device_selection():
         audio_settings.normalize_input_device_selection("manual:   ")
 
 
+def test_normalize_output_device_selection():
+    assert audio_settings.normalize_output_device_selection(None) == ""
+    assert audio_settings.normalize_output_device_selection(" auto ") == ""
+    assert audio_settings.normalize_output_device_selection("index:4") == "index:4"
+    assert audio_settings.normalize_output_device_selection("manual: hdmi ") == "manual:hdmi"
+
+    with pytest.raises(ValueError):
+        audio_settings.normalize_output_device_selection("index:")
+
+    with pytest.raises(ValueError):
+        audio_settings.normalize_output_device_selection("manual:")
+
+
 def test_set_and_get_selected_input_device(monkeypatch, tmp_path):
     path = _override_settings_path(monkeypatch, tmp_path)
     monkeypatch.setattr(audio_settings, "INPUT_DEVICE", "", raising=False)
@@ -45,6 +58,30 @@ def test_get_selected_input_device_env_fallback(monkeypatch, tmp_path):
     _override_settings_path(monkeypatch, tmp_path)
     monkeypatch.setattr(audio_settings, "INPUT_DEVICE", "hw:9,0", raising=False)
     assert audio_settings.get_selected_input_device() == "hw:9,0"
+
+
+def test_set_and_get_selected_output_device(monkeypatch, tmp_path):
+    path = _override_settings_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(audio_settings, "OUTPUT_DEVICE", "", raising=False)
+
+    audio_settings.set_selected_output_device("index:1")
+    assert path.is_file()
+    assert audio_settings.get_selected_output_device() == 1
+
+    audio_settings.set_selected_output_device("manual:hw:0,0")
+    assert audio_settings.get_selected_output_device() == "hw:0,0"
+
+    settings = audio_settings.load_audio_settings()
+    assert settings.output_device == "manual:hw:0,0"
+
+    audio_settings.set_selected_output_device("auto")
+    assert audio_settings.load_audio_settings().output_device == ""
+
+
+def test_get_selected_output_device_env_fallback(monkeypatch, tmp_path):
+    _override_settings_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(audio_settings, "OUTPUT_DEVICE", "hw:3,0", raising=False)
+    assert audio_settings.get_selected_output_device() == "hw:3,0"
 
 
 def test_extract_helpers(monkeypatch, tmp_path):

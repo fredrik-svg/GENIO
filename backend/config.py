@@ -46,5 +46,6 @@ RAG_CHUNK_SIZE = int(env("RAG_CHUNK_SIZE", "400"))
 RAG_CHUNK_OVERLAP = int(env("RAG_CHUNK_OVERLAP", "80"))
 
 INPUT_DEVICE = env("INPUT_DEVICE", "")  # valfri: namn eller index för mic (sounddevice)
+OUTPUT_DEVICE = env("OUTPUT_DEVICE", "")  # valfri: namn eller index för högtalare (sounddevice)
 PLAY_CMD = env("PLAY_CMD", "aplay -q")  # t.ex. 'aplay -q' eller 'paplay'
 OUTPUT_WAV_PATH = env("OUTPUT_WAV_PATH", "/tmp/reply.wav")

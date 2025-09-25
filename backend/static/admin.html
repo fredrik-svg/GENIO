@@ -90,6 +90,21 @@
       font-size: 14px;
       opacity: 0.75;
     }
+    .audio-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px 0;
+    }
+    .audio-group + .audio-group {
+      border-top: 1px solid rgba(76, 101, 150, 0.3);
+      margin-top: 14px;
+      padding-top: 24px;
+    }
+    .audio-group h3 {
+      margin: 0;
+      font-size: 20px;
+    }
     .field input[type="color"] {
       padding: 0;
       height: 48px;
@@ -309,29 +324,49 @@
 
     <div class="card" id="audio-card">
       <div>
-        <h2>Välj ljudkälla</h2>
-        <p class="helper">Välj vilken mikrofon backend ska använda för inspelning.</p>
+        <h2>Välj ljudenheter</h2>
+        <p class="helper">Ställ in vilka enheter som används för inspelning och uppspelning.</p>
       </div>
       <form id="audio-form">
-        <div class="field">
-          <label for="audio-input-select">Inspelningskälla</label>
-          <select id="audio-input-select" name="input-device">
-            <option value="auto">Systemets standard</option>
-            <option value="manual">Ange manuellt värde ...</option>
-          </select>
-          <small>Om din mikrofon inte visas kan du ange namn eller index manuellt.</small>
+        <div class="audio-group" id="audio-input-group">
+          <h3>Inspelning (mikrofon)</h3>
+          <div class="field">
+            <label for="audio-input-select">Inspelningskälla</label>
+            <select id="audio-input-select" name="input-device">
+              <option value="auto">Systemets standard</option>
+              <option value="manual">Ange manuellt värde ...</option>
+            </select>
+            <small>Om din mikrofon inte visas kan du ange namn eller index manuellt.</small>
+          </div>
+          <div class="field" id="audio-input-custom-field" style="display:none;">
+            <label for="audio-input-custom">Manuell ljudkälla</label>
+            <input id="audio-input-custom" name="audio-input-custom" type="text" placeholder="t.ex. hw:2,0" />
+            <small>Ange exakt namn, index eller ALSA-sträng.</small>
+          </div>
+          <div class="status" id="audio-input-status">Ingen specifik ljudkälla vald – systemets standard används.</div>
         </div>
-        <div class="field" id="audio-custom-field" style="display:none;">
-          <label for="audio-custom-input">Manuell ljudkälla</label>
-          <input id="audio-custom-input" name="audio-custom-input" type="text" placeholder="t.ex. hw:2,0" />
-          <small>Ange exakt namn, index eller ALSA-sträng.</small>
+        <div class="audio-group" id="audio-output-group">
+          <h3>Uppspelning (högtalare)</h3>
+          <div class="field">
+            <label for="audio-output-select">Uppspelningsenhet</label>
+            <select id="audio-output-select" name="output-device">
+              <option value="auto">Systemets standard</option>
+              <option value="manual">Ange manuellt värde ...</option>
+            </select>
+            <small>Om din högtalare inte visas kan du ange namn eller index manuellt.</small>
+          </div>
+          <div class="field" id="audio-output-custom-field" style="display:none;">
+            <label for="audio-output-custom">Manuell ljudutgång</label>
+            <input id="audio-output-custom" name="audio-output-custom" type="text" placeholder="t.ex. hw:0,0" />
+            <small>Ange exakt namn, index eller ALSA-sträng.</small>
+          </div>
+          <div class="status" id="audio-output-status">Ingen specifik ljudutgång vald – systemets standard används.</div>
         </div>
         <div class="grid">
-          <button class="btn secondary" type="button" id="audio-refresh">Uppdatera lista</button>
-          <button class="btn" type="submit" id="audio-save">Spara ljudkälla</button>
+          <button class="btn secondary" type="button" id="audio-refresh">Uppdatera listor</button>
+          <button class="btn" type="submit" id="audio-save">Spara ljudenheter</button>
         </div>
       </form>
-      <div class="status" id="audio-status">Ingen specifik ljudkälla vald – systemets standard används.</div>
     </div>
 
     <div class="card">
@@ -383,11 +418,27 @@
     const lanAdminList = document.getElementById('lan-admin-list');
     const lanDisplayList = document.getElementById('lan-display-list');
     const audioForm = document.getElementById('audio-form');
-    const audioSelect = document.getElementById('audio-input-select');
-    const audioManualField = document.getElementById('audio-custom-field');
-    const audioManualInput = document.getElementById('audio-custom-input');
+    const audioControls = {
+      input: {
+        kind: 'input',
+        select: document.getElementById('audio-input-select'),
+        manualField: document.getElementById('audio-input-custom-field'),
+        manualInput: document.getElementById('audio-input-custom'),
+        status: document.getElementById('audio-input-status'),
+        defaultStatus: 'Ingen specifik ljudkälla vald – systemets standard används.',
+        loadingText: 'Hämtar ljudenheter ...'
+      },
+      output: {
+        kind: 'output',
+        select: document.getElementById('audio-output-select'),
+        manualField: document.getElementById('audio-output-custom-field'),
+        manualInput: document.getElementById('audio-output-custom'),
+        status: document.getElementById('audio-output-status'),
+        defaultStatus: 'Ingen specifik ljudutgång vald – systemets standard används.',
+        loadingText: 'Hämtar ljudutgångar ...'
+      }
+    };
     const audioRefreshBtn = document.getElementById('audio-refresh');
-    const audioStatus = document.getElementById('audio-status');
     const backgroundUploadDefaultText = backgroundUploadFeedback ? backgroundUploadFeedback.textContent : '';
     let lanStatusDefault = lanStatus ? lanStatus.textContent : '';
     const clipboardAvailable = !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
@@ -423,11 +474,11 @@
       }, 3200);
     }
 
-    function toggleAudioManualField(show){
-      if(!audioManualField){
+    function toggleAudioManualField(fieldEl, show){
+      if(!fieldEl){
         return;
       }
-      audioManualField.style.display = show ? '' : 'none';
+      fieldEl.style.display = show ? '' : 'none';
     }
 
     function manualValueFromRaw(raw){
@@ -453,8 +504,9 @@
       return fallback || 'auto';
     }
 
-    function populateAudioSelectOptions(devices, selectedRaw, selectedOption){
-      if(!audioSelect){
+    function populateAudioSelectOptions(ctrl, devices, selectedRaw, selectedOption){
+      const selectEl = ctrl && ctrl.select;
+      if(!selectEl){
         return;
       }
 
@@ -466,17 +518,19 @@
       const manualValue = manualValueFromRaw(raw);
       const targetValue = option || determineAudioOption(raw, 'auto');
 
-      audioSelect.innerHTML = '';
+      selectEl.innerHTML = '';
 
       const autoOption = document.createElement('option');
       autoOption.value = 'auto';
       autoOption.textContent = 'Systemets standard';
-      audioSelect.appendChild(autoOption);
+      selectEl.appendChild(autoOption);
 
       const manualOption = document.createElement('option');
       manualOption.value = 'manual';
       manualOption.textContent = 'Ange manuellt värde ...';
-      audioSelect.appendChild(manualOption);
+      selectEl.appendChild(manualOption);
+
+      const channelKey = ctrl.kind === 'output' ? 'maxOutputChannels' : 'maxInputChannels';
 
       safeDevices.forEach((device) => {
         const optionEl = document.createElement('option');
@@ -494,7 +548,7 @@
           label = value;
         }
 
-        const channels = typeof device.maxInputChannels === 'number' ? device.maxInputChannels : null;
+        const channels = typeof device[channelKey] === 'number' ? device[channelKey] : null;
         if(channels && channels > 0){
           label += ` – ${channels} kanal${channels === 1 ? '' : 'er'}`;
         }
@@ -509,7 +563,7 @@
         }
 
         optionEl.textContent = label;
-        audioSelect.appendChild(optionEl);
+        selectEl.appendChild(optionEl);
       });
 
       if(targetValue && targetValue !== 'auto' && targetValue !== 'manual'){
@@ -524,57 +578,90 @@
           fallbackOption.value = targetValue;
           fallbackOption.textContent = `Tidigare vald: ${targetValue}`;
           fallbackOption.dataset.missing = '1';
-          audioSelect.appendChild(fallbackOption);
+          selectEl.appendChild(fallbackOption);
         }
       }
 
-      audioSelect.value = targetValue || 'auto';
-      if(audioSelect.value !== (targetValue || 'auto')){
-        audioSelect.value = targetValue === 'manual' ? 'manual' : 'auto';
+      selectEl.value = targetValue || 'auto';
+      if(selectEl.value !== (targetValue || 'auto')){
+        selectEl.value = targetValue === 'manual' ? 'manual' : 'auto';
       }
 
-      toggleAudioManualField(audioSelect.value === 'manual');
-      if(audioManualInput){
-        audioManualInput.value = manualValue;
+      toggleAudioManualField(ctrl.manualField, selectEl.value === 'manual');
+      if(ctrl.manualInput){
+        ctrl.manualInput.value = manualValue;
       }
     }
 
-    function setAudioStatus(text){
-      if(!audioStatus){
+    function setAudioStatus(ctrl, text){
+      if(!ctrl || !ctrl.status){
         return;
       }
-      audioStatus.textContent = text;
+      ctrl.status.textContent = text;
+    }
+
+    function applyAudioPayload(kind, payload, fallbackMessage){
+      const ctrl = audioControls[kind];
+      if(!ctrl){
+        return;
+      }
+
+      const devices = payload && Array.isArray(payload.devices) ? payload.devices : [];
+      const selectedRaw = payload && typeof payload.selected === 'string' ? payload.selected : '';
+      const selectedOption = payload && typeof payload.selectedOption === 'string' ? payload.selectedOption : undefined;
+
+      populateAudioSelectOptions(ctrl, devices, selectedRaw, selectedOption);
+
+      let message = ctrl.defaultStatus;
+      if(payload && typeof payload.message === 'string' && payload.message.trim()){
+        message = payload.message.trim();
+      } else if(fallbackMessage){
+        message = fallbackMessage;
+      }
+      if(payload && typeof payload.error === 'string' && !payload.devicesOk){
+        message = payload.error;
+      }
+      if(payload && typeof payload.devicesError === 'string'){
+        message = payload.devicesError;
+      }
+      setAudioStatus(ctrl, message);
+    }
+
+    async function fetchAudioDevices(kind, showLoading = true){
+      const ctrl = audioControls[kind];
+      if(!ctrl || !ctrl.select){
+        return;
+      }
+      if(showLoading){
+        setAudioStatus(ctrl, ctrl.loadingText);
+      }
+      try {
+        const res = await fetch(`/api/audio/${kind}-devices`);
+        const data = await res.json();
+        if(res.ok && data){
+          applyAudioPayload(kind, data);
+        } else {
+          const errorText = data && typeof data.error === 'string'
+            ? data.error
+            : (kind === 'input'
+              ? 'Kunde inte hämta ljudenheter.'
+              : 'Kunde inte hämta ljudutgångar.');
+          setAudioStatus(ctrl, errorText);
+        }
+      } catch (err) {
+        console.error(kind === 'input' ? 'Kunde inte hämta ljudenheter' : 'Kunde inte hämta ljudutgångar', err);
+        setAudioStatus(
+          ctrl,
+          kind === 'input' ? 'Kunde inte hämta ljudenheter.' : 'Kunde inte hämta ljudutgångar.'
+        );
+      }
     }
 
     async function loadAudioDevices(showLoading = true){
-      if(!audioForm || !audioSelect){
-        return;
-      }
-      if(audioStatus && showLoading){
-        setAudioStatus('Hämtar ljudenheter ...');
-      }
-      try {
-        const res = await fetch('/api/audio/input-devices');
-        const data = await res.json();
-        const devices = data && Array.isArray(data.devices) ? data.devices : [];
-        const selectedRaw = data && typeof data.selected === 'string' ? data.selected : '';
-        const selectedOption = data && typeof data.selectedOption === 'string' ? data.selectedOption : undefined;
-        populateAudioSelectOptions(devices, selectedRaw, selectedOption);
-        if(audioStatus){
-          if(data && typeof data.message === 'string' && data.message.trim()){
-            audioStatus.textContent = data.message;
-          } else if(res.ok){
-            audioStatus.textContent = 'Ljudenheter uppdaterade.';
-          } else {
-            audioStatus.textContent = data && typeof data.error === 'string' ? data.error : 'Kunde inte hämta ljudenheter.';
-          }
-        }
-      } catch (err) {
-        if(audioStatus){
-          audioStatus.textContent = 'Kunde inte hämta ljudenheter.';
-        }
-        console.error('Kunde inte hämta ljudenheter', err);
-      }
+      await Promise.all([
+        fetchAudioDevices('input', showLoading),
+        fetchAudioDevices('output', showLoading)
+      ]);
     }
 
     function renderLanLinks(urls, listEl){
@@ -763,17 +850,19 @@
       updateNamePreview();
     }
 
-    toggleAudioManualField(audioSelect && audioSelect.value === 'manual');
-
-    if(audioSelect){
-      audioSelect.addEventListener('change', () => {
-        const isManual = audioSelect.value === 'manual';
-        toggleAudioManualField(isManual);
-        if(isManual && audioManualInput){
-          audioManualInput.focus();
+    Object.values(audioControls).forEach((ctrl) => {
+      if(!ctrl || !ctrl.select){
+        return;
+      }
+      ctrl.select.addEventListener('change', () => {
+        const isManual = ctrl.select.value === 'manual';
+        toggleAudioManualField(ctrl.manualField, isManual);
+        if(isManual && ctrl.manualInput){
+          ctrl.manualInput.focus();
         }
       });
-    }
+      toggleAudioManualField(ctrl.manualField, ctrl.select.value === 'manual');
+    });
 
     if(audioRefreshBtn){
       audioRefreshBtn.addEventListener('click', () => {
@@ -784,64 +873,87 @@
     if(audioForm){
       audioForm.addEventListener('submit', async (ev) => {
         ev.preventDefault();
-        if(!audioSelect){
+
+        const inputCtrl = audioControls.input;
+        const outputCtrl = audioControls.output;
+
+        if(!inputCtrl.select && !outputCtrl.select){
           return;
         }
 
-        const choice = audioSelect.value;
-        let manualValue = '';
-        if(choice === 'manual'){
-          manualValue = audioManualInput ? audioManualInput.value.trim() : '';
-          if(!manualValue){
-            if(audioStatus){
-              audioStatus.textContent = 'Ange en manuell ljudkälla.';
+        const payload = {};
+
+        if(inputCtrl && inputCtrl.select){
+          const inputChoice = inputCtrl.select.value;
+          let inputManual = '';
+          if(inputChoice === 'manual'){
+            inputManual = inputCtrl.manualInput ? inputCtrl.manualInput.value.trim() : '';
+            if(!inputManual){
+              setAudioStatus(inputCtrl, 'Ange en manuell ljudkälla.');
+              if(inputCtrl.manualInput){
+                inputCtrl.manualInput.focus();
+              }
+              return;
             }
-            if(audioManualInput){
-              audioManualInput.focus();
-            }
-            return;
+          } else if(inputChoice.startsWith('manual:')){
+            inputManual = inputCtrl.manualInput ? inputCtrl.manualInput.value.trim() : '';
           }
-        } else if(choice.startsWith('manual:')){
-          manualValue = audioManualInput ? audioManualInput.value.trim() : '';
+          payload.inputDevice = inputChoice;
+          payload.manualValue = inputManual;
         }
 
-        if(audioStatus){
-          audioStatus.textContent = 'Sparar ljudkälla ...';
+        if(outputCtrl && outputCtrl.select){
+          const outputChoice = outputCtrl.select.value;
+          let outputManual = '';
+          if(outputChoice === 'manual'){
+            outputManual = outputCtrl.manualInput ? outputCtrl.manualInput.value.trim() : '';
+            if(!outputManual){
+              setAudioStatus(outputCtrl, 'Ange en manuell ljudutgång.');
+              if(outputCtrl.manualInput){
+                outputCtrl.manualInput.focus();
+              }
+              return;
+            }
+          } else if(outputChoice.startsWith('manual:')){
+            outputManual = outputCtrl.manualInput ? outputCtrl.manualInput.value.trim() : '';
+          }
+          payload.outputDevice = outputChoice;
+          payload.outputManualValue = outputManual;
         }
+
+        setAudioStatus(audioControls.input, 'Sparar ljudenheter ...');
+        setAudioStatus(audioControls.output, 'Sparar ljudenheter ...');
 
         try {
           const res = await fetch('/api/audio/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              inputDevice: choice,
-              manualValue: manualValue
-            })
+            body: JSON.stringify(payload)
           });
           const data = await res.json();
           if(res.ok && data){
-            const devices = Array.isArray(data.devices) ? data.devices : [];
-            const selectedRaw = typeof data.selected === 'string' ? data.selected : '';
-            const selectedOption = typeof data.selectedOption === 'string' ? data.selectedOption : undefined;
-            populateAudioSelectOptions(devices, selectedRaw, selectedOption);
-            if(audioStatus){
-              if(typeof data.message === 'string' && data.message.trim()){
-                audioStatus.textContent = data.message;
-              } else {
-                audioStatus.textContent = 'Ljudkälla sparad.';
-              }
+            if(data.input){
+              applyAudioPayload('input', data.input, 'Ljudenhet sparad.');
+            }
+            if(data.output){
+              applyAudioPayload('output', data.output, 'Ljudenhet sparad.');
             }
           } else {
-            if(audioStatus){
-              const errMsg = data && typeof data.error === 'string' ? data.error : 'Kunde inte spara ljudkälla.';
-              audioStatus.textContent = errMsg;
+            const errMsg = data && typeof data.error === 'string' ? data.error : 'Kunde inte spara ljudenheter.';
+            const field = data && typeof data.field === 'string' ? data.field : '';
+            if(field === 'output'){
+              setAudioStatus(audioControls.output, errMsg);
+            } else if(field === 'input'){
+              setAudioStatus(audioControls.input, errMsg);
+            } else {
+              setAudioStatus(audioControls.input, errMsg);
+              setAudioStatus(audioControls.output, errMsg);
             }
           }
         } catch (err) {
-          if(audioStatus){
-            audioStatus.textContent = 'Ett fel inträffade vid sparande av ljudkälla.';
-          }
-          console.error('Kunde inte spara ljudkälla', err);
+          console.error('Kunde inte spara ljudenheter', err);
+          setAudioStatus(audioControls.input, 'Ett fel inträffade vid sparande av ljudenheter.');
+          setAudioStatus(audioControls.output, 'Ett fel inträffade vid sparande av ljudenheter.');
         }
       });
     }
