@@ -143,6 +143,7 @@ Se `.env.sample`:
 - `TTS_VOICE=alloy`  (alternativ: "verse", "aria" m.fl. beroende på tillgänglighet)
 - `STT_MODEL=whisper-1`
 - `SAMPLE_RATE=16000`
+- `FALLBACK_SAMPLE_RATES=48000,44100,32000,24000,22050,16000,11025,8000`
 - `MAX_RECORD_SECONDS=12`
 - `SILENCE_DURATION=1.0`
 - `ENERGY_THRESHOLD=0.015`

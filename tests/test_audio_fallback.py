@@ -74,6 +74,28 @@ def test_open_stream_tries_known_rates(monkeypatch):
     assert attempts[0] == 48000
 
 
+def test_open_stream_honours_configured_rates(monkeypatch):
+    attempts = []
+
+    def fake_open_stream(rate):
+        attempts.append(rate)
+        if rate == 44100:
+            return "ok"
+        raise DummyPortAudioError("nope")
+
+    dummy_sd = _make_dummy_sd(query_result={"default_samplerate": None})
+    monkeypatch.setattr(audio, "sd", dummy_sd)
+    monkeypatch.setattr(audio, "_COMMON_SAMPLE_RATES", (96000, 44100))
+
+    stream, rate = audio._open_stream_with_fallback(
+        fake_open_stream, None, {audio.SAMPLE_RATE}
+    )
+
+    assert stream == "ok"
+    assert rate == 44100
+    assert attempts == [96000, 44100]
+
+
 def test_gather_fallback_filters_invalid(monkeypatch):
     dummy_sd = _make_dummy_sd(
         query_result={"default_samplerate": float("nan")},
