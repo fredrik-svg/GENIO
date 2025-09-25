@@ -148,14 +148,55 @@ def _gather_fallback_sample_rates(device, excluded_rates):
     return candidates
 
 
-def _open_stream_with_fallback(open_stream, device, excluded_rates):
+def _supports_input_sample_rate(
+    device,
+    channels: int,
+    dtype: str,
+    sample_rate: int,
+) -> bool:
+    """Return ``True`` if the PortAudio backend accepts *sample_rate* for input."""
+
+    if not _sounddevice_available():  # pragma: no cover - defensive guard
+        return False
+
+    check_settings = getattr(sd, "check_input_settings", None)
+    if check_settings is None:  # pragma: no cover - fallback for very old versions
+        return True
+
+    try:
+        check_settings(
+            device=device,
+            channels=channels,
+            dtype=dtype,
+            samplerate=sample_rate,
+        )
+    except Exception as exc:  # pragma: no cover - behaviour depends on PortAudio backend
+        logger.debug(
+            "Input device %r does not accept %d Hz: %s", device, sample_rate, exc
+        )
+        return False
+    return True
+
+
+def _open_stream_with_fallback(
+    open_stream,
+    device,
+    excluded_rates,
+    supports_rate=None,
+):
     """Try to open *open_stream* with fallback sample rates.
 
     Returns a tuple ``(stream, sample_rate)``.
     """
 
     last_error = None
+    attempted = False
     for candidate_rate in _gather_fallback_sample_rates(device, excluded_rates):
+        if supports_rate is not None and not supports_rate(candidate_rate):
+            logger.debug(
+                "Skipping unsupported fallback sample rate %d Hz", candidate_rate
+            )
+            continue
         try:
             stream = open_stream(candidate_rate)
         except sd.PortAudioError as exc:
@@ -164,12 +205,15 @@ def _open_stream_with_fallback(open_stream, device, excluded_rates):
                 "Failed to open input stream at %d Hz: %s", candidate_rate, exc
             )
             continue
+        attempted = True
         logger.info("Recording using fallback sample rate %d Hz", candidate_rate)
         return stream, candidate_rate
 
     if last_error is not None:
         raise last_error
-    raise RuntimeError("Unable to open audio input stream")
+    if attempted:
+        raise RuntimeError("Unable to open audio input stream")
+    raise RuntimeError("No usable fallback sample rates available")
 
 
 def _read_chunks(buffer: io.BytesIO):
@@ -407,6 +451,9 @@ def record_until_silence() -> np.ndarray:
             logger.warning("No usable audio input device detected; returning silence.")
         return np.zeros((0,), dtype=np.float32)
 
+    def supports_rate(sample_rate: int) -> bool:
+        return _supports_input_sample_rate(device, channels, "float32", sample_rate)
+
     def open_stream(sample_rate: int):
         if not _sounddevice_available():  # pragma: no cover - defensive
             raise RuntimeError("sounddevice is unavailable")
@@ -422,12 +469,27 @@ def record_until_silence() -> np.ndarray:
     stream = None
     effective_sample_rate = SAMPLE_RATE
     try:
-        stream = open_stream(SAMPLE_RATE)
+        if supports_rate(SAMPLE_RATE):
+            stream = open_stream(SAMPLE_RATE)
+        else:
+            logger.info(
+                "Input device %r does not support configured sample rate %d Hz; "
+                "trying fallbacks",
+                device,
+                SAMPLE_RATE,
+            )
+            stream = None
     except sd.PortAudioError as exc:
         logger.warning("Failed to open input stream at %d Hz: %s", SAMPLE_RATE, exc)
+        stream = None
+
+    if stream is None:
         try:
             stream, effective_sample_rate = _open_stream_with_fallback(
-                open_stream, device, {SAMPLE_RATE}
+                open_stream,
+                device,
+                {SAMPLE_RATE},
+                supports_rate=supports_rate,
             )
         except sd.PortAudioError as fallback_exc:
             logger.warning(
