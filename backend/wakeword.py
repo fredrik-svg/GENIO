@@ -22,6 +22,81 @@ DEFAULT_PORCUPINE_KEYWORDS: Tuple[str, ...] = ("porcupine",)
 logger = logging.getLogger(__name__)
 
 
+def _open_wake_word_input_stream(sd_module, samplerate: int, blocksize: int, device):
+    """Open an ``InputStream`` for wake word detection with graceful fallbacks."""
+
+    def rate_supported(rate: int) -> bool:
+        try:
+            return _supports_input_sample_rate(device, 1, "float32", rate)
+        except Exception:  # pragma: no cover - defensive guard
+            logger.debug(
+                "Failed to determine whether %d Hz is supported for wake word input.",
+                rate,
+                exc_info=True,
+            )
+            return True
+
+    last_error: Optional[Exception] = None
+    attempts = 0
+
+    def try_start(rate: int, *, is_primary: bool):
+        nonlocal last_error, attempts
+
+        supported = rate_supported(rate)
+        if not supported:
+            logger.debug(
+                "Wake word input device %r reported %d Hz as unsupported; trying anyway.",
+                device,
+                rate,
+            )
+
+        adjusted_blocksize = max(1, int(round(blocksize * rate / float(samplerate))))
+        attempts += 1
+
+        try:
+            stream = sd_module.InputStream(
+                device=device,
+                channels=1,
+                samplerate=rate,
+                blocksize=adjusted_blocksize,
+                dtype="float32",
+            )
+            stream.start()
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Failed to start wake word audio stream at %d Hz: %s",
+                rate,
+                exc,
+            )
+            return None
+
+        if not is_primary:
+            logger.info(
+                "Wake word listener using fallback sample rate %d Hz",
+                rate,
+            )
+
+        return stream, rate, adjusted_blocksize
+
+    result = try_start(samplerate, is_primary=True)
+    if result is not None:
+        return result
+
+    for candidate_rate in _gather_fallback_sample_rates(device, {samplerate}):
+        result = try_start(candidate_rate, is_primary=False)
+        if result is not None:
+            return result
+
+    if last_error is None:
+        if attempts:
+            last_error = RuntimeError("Unable to open audio input stream")
+        else:
+            last_error = RuntimeError("No usable wake word sample rates")
+
+    raise last_error
+
+
 class WakeWordListener:
     def __init__(
         self,
@@ -201,76 +276,13 @@ class WakeWordListener:
                 result.append(lower_value * (1.0 - fraction) + upper_value * fraction)
             return result
 
-        def supports_rate(rate: int) -> bool:
-            return _supports_input_sample_rate(device, 1, "float32", rate)
-
         def start_stream():
-            last_error: Optional[Exception] = None
-            attempted = False
-
-            def open_with_rate(rate: int):
-                adjusted_blocksize = max(1, int(round(blocksize * rate / float(samplerate))))
-                stream = sd.InputStream(
-                    device=device,
-                    channels=1,
-                    samplerate=rate,
-                    blocksize=adjusted_blocksize,
-                    dtype="float32",
-                )
-                stream.start()
-                return stream, adjusted_blocksize
-
-            try:
-                if supports_rate(samplerate):
-                    stream, adjusted_blocksize = open_with_rate(samplerate)
-                else:
-                    logger.info(
-                        "Wake word input device %r does not support %d Hz; trying fallbacks",
-                        device,
-                        samplerate,
-                    )
-                    raise RuntimeError("unsupported sample rate")
-            except Exception as exc:
-                last_error = exc
-                logger.warning(
-                    "Failed to start wake word audio stream at %d Hz: %s",
-                    samplerate,
-                    exc,
-                )
-            else:
-                attempted = True
-                return stream, samplerate, adjusted_blocksize
-
-            for candidate_rate in _gather_fallback_sample_rates(device, {samplerate}):
-                if not supports_rate(candidate_rate):
-                    logger.debug(
-                        "Skipping unsupported wake word fallback sample rate %d Hz",
-                        candidate_rate,
-                    )
-                    continue
-                try:
-                    stream, adjusted_blocksize = open_with_rate(candidate_rate)
-                except Exception as exc:
-                    last_error = exc
-                    logger.warning(
-                        "Failed to start wake word audio stream at %d Hz: %s",
-                        candidate_rate,
-                        exc,
-                    )
-                    continue
-                attempted = True
-                logger.info(
-                    "Wake word listener using fallback sample rate %d Hz",
-                    candidate_rate,
-                )
-                return stream, candidate_rate, adjusted_blocksize
-
-            if last_error is None:
-                if attempted:
-                    last_error = RuntimeError("Unable to open audio input stream")
-                else:
-                    last_error = RuntimeError("No usable wake word sample rates")
-            raise last_error
+            return _open_wake_word_input_stream(
+                sd,
+                samplerate=samplerate,
+                blocksize=blocksize,
+                device=device,
+            )
 
         stream = None
         effective_sample_rate = samplerate
