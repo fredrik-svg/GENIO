@@ -53,31 +53,40 @@ def _open_wake_word_input_stream(sd_module, samplerate: int, blocksize: int, dev
         adjusted_blocksize = max(1, int(round(blocksize * rate / float(samplerate))))
         attempts += 1
 
-        try:
-            stream = sd_module.InputStream(
-                device=device,
-                channels=1,
-                samplerate=rate,
-                blocksize=adjusted_blocksize,
-                dtype="float32",
-            )
-            stream.start()
-        except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "Failed to start wake word audio stream at %d Hz: %s",
-                rate,
-                exc,
-            )
-            return None
+        for dtype in ("float32", "int16"):
+            try:
+                stream = sd_module.InputStream(
+                    device=device,
+                    channels=1,
+                    samplerate=rate,
+                    blocksize=adjusted_blocksize,
+                    dtype=dtype,
+                )
+                stream.start()
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Failed to start wake word audio stream at %d Hz with dtype %s: %s",
+                    rate,
+                    dtype,
+                    exc,
+                )
+                continue
 
-        if not is_primary:
-            logger.info(
-                "Wake word listener using fallback sample rate %d Hz",
-                rate,
-            )
+            if not is_primary:
+                logger.info(
+                    "Wake word listener using fallback sample rate %d Hz",
+                    rate,
+                )
+            if dtype != "float32":
+                logger.info(
+                    "Wake word listener using %s audio format for wake word input",
+                    dtype,
+                )
 
-        return stream, rate, adjusted_blocksize
+            return stream, rate, adjusted_blocksize, dtype
+
+        return None
 
     result = try_start(samplerate, is_primary=True)
     if result is not None:
@@ -287,9 +296,10 @@ class WakeWordListener:
         stream = None
         effective_sample_rate = samplerate
         frames_per_read = blocksize
+        stream_dtype = "float32"
         try:
             try:
-                stream, effective_sample_rate, frames_per_read = start_stream()
+                stream, effective_sample_rate, frames_per_read, stream_dtype = start_stream()
             except Exception as exc:  # pragma: no cover - defensive guard
                 logger.error("Could not start wake word audio stream: %s", exc)
                 return
@@ -305,8 +315,12 @@ class WakeWordListener:
 
                 if np is not None:
                     y = audio_block[:, 0].astype(np.float32, copy=False)
+                    if stream_dtype.startswith("int"):
+                        y *= 1.0 / 32768.0
                 else:  # pragma: no cover - numpy saknas endast i testmiljöer
                     y = [float(sample[0]) for sample in audio_block]
+                    if stream_dtype.startswith("int"):
+                        y = [value / 32768.0 for value in y]
 
                 if effective_sample_rate != samplerate:
                     y = resample_block(y, effective_sample_rate)
@@ -338,7 +352,7 @@ class WakeWordListener:
                     break
 
                 try:
-                    stream, effective_sample_rate, frames_per_read = start_stream()
+                    stream, effective_sample_rate, frames_per_read, stream_dtype = start_stream()
                 except Exception as exc:  # pragma: no cover - defensive guard
                     logger.error("Could not restart wake word audio stream: %s", exc)
                     break
