@@ -316,6 +316,69 @@ def _decode_wav_audio(data: bytes) -> tuple[np.ndarray, int]:
     return audio.astype(np.float32, copy=False), sample_rate
 
 
+def ensure_wav_pcm16(data: bytes) -> bytes:
+    """Return ``data`` as 16-bit PCM WAV bytes.
+
+    Many command line players (t.ex. ``aplay``) kan inte spela upp WAV-filer
+    som innehåller 32-bitars flyttalsljud, vilket OpenAI:s TTS ofta producerar.
+    Den här hjälpfunktionen gör därför en minimal omkodning till 16-bitars
+    PCM när det behövs, men lämnar redan kompatibla filer oförändrade.
+    """
+
+    if not data:
+        return data
+
+    try:
+        metadata = _parse_wav_metadata(data)
+    except Exception:  # pragma: no cover - defensivt skydd mot korrupta filer
+        logger.debug("Failed to parse WAV metadata when ensuring PCM16.", exc_info=True)
+        return data
+
+    if (
+        metadata["format_tag"] == _WAVE_FORMAT_PCM
+        and metadata["bits_per_sample"] == 16
+    ):
+        return data
+
+    try:
+        audio, sample_rate = _decode_wav_audio(data)
+    except Exception:  # pragma: no cover - defensivt skydd mot oväntade format
+        logger.debug("Failed to decode WAV while converting to PCM16.", exc_info=True)
+        return data
+
+    channels = int(metadata.get("channels") or 1)
+    if channels < 1:
+        channels = 1
+
+    float_audio = np.asarray(audio, dtype=np.float32)
+    if float_audio.ndim == 1 and channels > 1 and float_audio.size:
+        # Se till att vi har rätt antal kanaler när metadata säger multi-kanal.
+        frames = float_audio.size // channels
+        if frames > 0:
+            float_audio = float_audio[: frames * channels].reshape(frames, channels)
+        else:
+            channels = 1
+
+    if float_audio.ndim > 1:
+        channels = float_audio.shape[1]
+        interleaved = float_audio.reshape(-1)
+    else:
+        interleaved = float_audio
+        channels = max(1, channels)
+
+    clipped = np.clip(interleaved, -1.0, 1.0)
+    ints = np.round(clipped * 32767.0).astype(np.int16, copy=False)
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(int(sample_rate))
+        wav_file.writeframes(ints.tobytes())
+
+    return buf.getvalue()
+
+
 def rms_energy(audio: np.ndarray) -> float:
     """Returnera RMS-energi (0..1 ungefär)."""
     return float(np.sqrt(np.mean(np.square(audio))))
