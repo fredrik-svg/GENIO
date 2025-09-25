@@ -209,6 +209,57 @@
     .copy-btn:active {
       transform: scale(0.97);
     }
+    .display-targets {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 16px;
+      background: rgba(15, 30, 55, 0.6);
+      border: 1px solid rgba(62, 96, 146, 0.4);
+    }
+    .display-targets h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .display-targets-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .display-targets-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(18, 36, 70, 0.65);
+      border: 1px solid rgba(62, 96, 146, 0.45);
+    }
+    .display-targets-title {
+      font-weight: 600;
+      font-size: 16px;
+    }
+    .display-targets-monitors {
+      margin: 0;
+      padding-left: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .display-targets-monitors li {
+      font-size: 14px;
+      opacity: 0.85;
+    }
+    .display-targets-empty {
+      margin: 0;
+      font-size: 14px;
+      opacity: 0.8;
+    }
     @media (max-width: 720px) {
       .wrap { padding: 24px 16px 40px; }
       header { justify-content: center; }
@@ -326,6 +377,12 @@
       <div>
         <h2>Välj skärmar</h2>
         <p class="helper" id="display-helper">Söker skärmar ...</p>
+      </div>
+      <div class="display-targets" id="display-targets" aria-live="polite">
+        <h3>Tillgängliga skärmar</h3>
+        <div id="display-targets-content">
+          <p class="display-targets-empty">Söker efter anslutna skärmar ...</p>
+        </div>
       </div>
       <form id="display-form">
         <div class="audio-group" id="assistant-display-group">
@@ -468,6 +525,8 @@
     const displayForm = document.getElementById('display-form');
     const displayHelper = document.getElementById('display-helper');
     const displayStatus = document.getElementById('display-status');
+    const displayTargetsContainer = document.getElementById('display-targets');
+    const displayTargetsContent = document.getElementById('display-targets-content');
     const displayRefreshBtn = document.getElementById('display-refresh');
     const displayControls = {
       assistant: {
@@ -557,6 +616,134 @@
       fieldEl.style.display = show ? '' : 'none';
     }
 
+    function formatRefreshLabel(value){
+      if(typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value) || value <= 0){
+        return '';
+      }
+      let refresh = value;
+      if(refresh > 1000){
+        refresh = refresh / 1000;
+      }
+      const rounded = Math.round(refresh * 10) / 10;
+      if(Math.abs(rounded - Math.round(rounded)) < 1e-6){
+        return `${Math.round(rounded)} Hz`;
+      }
+      return `${rounded.toFixed(1)} Hz`;
+    }
+
+    function formatDisplayMonitor(monitor){
+      if(!monitor || typeof monitor !== 'object'){
+        return '';
+      }
+
+      const name = typeof monitor.name === 'string' ? monitor.name.trim() : '';
+      const description = typeof monitor.description === 'string' ? monitor.description.trim() : '';
+      const make = typeof monitor.make === 'string' ? monitor.make.trim() : '';
+      const model = typeof monitor.model === 'string' ? monitor.model.trim() : '';
+      let label = name || description || `${make}${model ? ` ${model}` : ''}`.trim();
+      if(!label){
+        label = 'Skärm';
+      }
+      if(monitor.primary){
+        label = `${label} (primär)`;
+      }
+
+      const details = [];
+      const makeModel = [make, model].filter(Boolean).join(' ');
+      if(makeModel && makeModel !== label){
+        details.push(makeModel);
+      }
+      const width = typeof monitor.width === 'number' && monitor.width > 0 ? monitor.width : null;
+      const height = typeof monitor.height === 'number' && monitor.height > 0 ? monitor.height : null;
+      if(width && height){
+        details.push(`${width}x${height}`);
+      }
+      const refresh = typeof monitor.refreshHz === 'number' ? monitor.refreshHz : monitor.refresh;
+      const refreshLabel = formatRefreshLabel(refresh);
+      if(refreshLabel){
+        details.push(refreshLabel);
+      }
+      const scale = typeof monitor.scale === 'number' && monitor.scale > 0 ? monitor.scale : null;
+      if(scale && scale !== 1){
+        details.push(`skala ${scale}`);
+      }
+      if(description && description !== label && !details.includes(description)){
+        details.push(description);
+      }
+
+      return details.length ? `${label} – ${details.join(', ')}` : label;
+    }
+
+    function renderDisplayTargetsPreview(){
+      if(!displayTargetsContainer || !displayTargetsContent){
+        return;
+      }
+      const targets = Array.isArray(displayTargetsState.list) ? displayTargetsState.list : [];
+      displayTargetsContent.innerHTML = '';
+
+      if(!targets.length){
+        const empty = document.createElement('p');
+        empty.className = 'display-targets-empty';
+        empty.textContent = 'Inga skärmar hittades automatiskt – ange värden manuellt vid behov.';
+        displayTargetsContent.appendChild(empty);
+        return;
+      }
+
+      const list = document.createElement('ul');
+      list.className = 'display-targets-list';
+
+      targets.forEach((target) => {
+        if(!target || typeof target.value !== 'string'){
+          return;
+        }
+        const item = document.createElement('li');
+        item.className = 'display-targets-item';
+
+        const title = document.createElement('div');
+        title.className = 'display-targets-title';
+        const titleText = typeof target.label === 'string' && target.label.trim()
+          ? target.label.trim()
+          : target.value;
+        title.textContent = titleText;
+        item.appendChild(title);
+
+        const monitors = Array.isArray(target.monitors) ? target.monitors : [];
+        if(monitors.length){
+          const monitorList = document.createElement('ul');
+          monitorList.className = 'display-targets-monitors';
+          monitors.forEach((monitor) => {
+            const entry = formatDisplayMonitor(monitor);
+            if(!entry){
+              return;
+            }
+            const monitorItem = document.createElement('li');
+            monitorItem.textContent = entry;
+            monitorList.appendChild(monitorItem);
+          });
+          if(monitorList.childElementCount){
+            item.appendChild(monitorList);
+          }
+        } else {
+          const fallback = document.createElement('p');
+          fallback.className = 'display-targets-empty';
+          fallback.textContent = target.value;
+          item.appendChild(fallback);
+        }
+
+        list.appendChild(item);
+      });
+
+      if(!list.childElementCount){
+        const empty = document.createElement('p');
+        empty.className = 'display-targets-empty';
+        empty.textContent = 'Inga skärmdetaljer kunde hämtas.';
+        displayTargetsContent.appendChild(empty);
+        return;
+      }
+
+      displayTargetsContent.appendChild(list);
+    }
+
     function populateDisplayOptions(selectEl){
       if(!selectEl){
         return;
@@ -585,6 +772,12 @@
           ? target.label.trim()
           : target.value;
         option.textContent = label;
+        const monitors = Array.isArray(target.monitors) ? target.monitors : [];
+        const summary = monitors
+          .map((monitor) => formatDisplayMonitor(monitor))
+          .filter((entry) => typeof entry === 'string' && entry.trim())
+          .join(' • ');
+        option.title = summary || label;
         selectEl.appendChild(option);
       });
 
@@ -691,6 +884,8 @@
         }
         setDisplayStatus('Fel vid hämtning av skärmar.');
       }
+
+      renderDisplayTargetsPreview();
 
       Object.values(displayControls).forEach((ctrl) => {
         if(ctrl && ctrl.select){
