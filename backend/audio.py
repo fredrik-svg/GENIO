@@ -52,6 +52,7 @@ def _sounddevice_available() -> bool:
 from .audio_settings import get_selected_input_device, get_selected_output_device
 from .config import (
     ENERGY_THRESHOLD,
+    FALLBACK_SAMPLE_RATES,
     MAX_RECORD_SECONDS,
     SAMPLE_RATE,
     SILENCE_DURATION,
@@ -60,7 +61,11 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-_COMMON_SAMPLE_RATES = (48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000)
+_COMMON_SAMPLE_RATES = (
+    FALLBACK_SAMPLE_RATES
+    if FALLBACK_SAMPLE_RATES
+    else (48000, 44100, 32000, 24000, 22050, 16000, 11025, 8000)
+)
 
 _WAVE_FORMAT_PCM = 0x0001
 _WAVE_FORMAT_IEEE_FLOAT = 0x0003

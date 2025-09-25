@@ -23,7 +23,25 @@ def env_bool(key: str, default: str = "0") -> bool:
     value = os.getenv(key, default)
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
+def _parse_fallback_sample_rates(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return ()
+    rates: list[int] = []
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            rate = int(float(chunk))
+        except ValueError:
+            continue
+        if rate > 0:
+            rates.append(rate)
+    return tuple(rates)
+
+
 SAMPLE_RATE = int(env("SAMPLE_RATE", "16000"))
+FALLBACK_SAMPLE_RATES = _parse_fallback_sample_rates(env("FALLBACK_SAMPLE_RATES"))
 MAX_RECORD_SECONDS = float(env("MAX_RECORD_SECONDS", "12"))
 # Tillåt längre tystnad efter aktiverad mikrofon innan inspelningen avslutas.
 SILENCE_DURATION = float(env("SILENCE_DURATION", "2.5"))
