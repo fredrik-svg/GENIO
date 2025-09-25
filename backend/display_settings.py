@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 _SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "display_settings.json")
 _MONITOR_LINE_RE = re.compile(r"^\s*(\d+):\s+([+*]*)(\S+)")
+_MONITOR_RESOLUTION_RE = re.compile(
+    r"(?P<width>\d+)(?:/\d+)?x(?P<height>\d+)(?:/\d+)?",
+)
 
 
 class DisplaySettings(BaseModel):
@@ -279,11 +282,25 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
             index = int(match.group(1))
             flags = match.group(2) or ""
             name = match.group(3)
+            rest = line[match.end() :].strip()
+            width: int | None = None
+            height: int | None = None
+            if rest:
+                resolution_match = _MONITOR_RESOLUTION_RE.search(rest)
+                if resolution_match:
+                    try:
+                        width = int(resolution_match.group("width"))
+                        height = int(resolution_match.group("height"))
+                    except (TypeError, ValueError):
+                        width = None
+                        height = None
             monitors.append(
                 {
                     "index": index,
                     "name": name,
                     "primary": "*" in flags,
+                    "width": width,
+                    "height": height,
                 }
             )
         x11_cache[value] = monitors
