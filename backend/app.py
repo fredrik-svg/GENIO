@@ -14,6 +14,7 @@ from .audio import (
     record_until_silence,
     save_wav_mono16,
     play_wav_bytes,
+    ensure_wav_pcm16,
     list_input_devices,
     list_output_devices,
 )
@@ -378,6 +379,7 @@ async def full_converse_flow(trigger: str = "touch", *, suspend_wakeword: bool =
 
         await notify("status: Skapar tal ...")
         wav_reply = await tts_speak_sv(reply)
+        wav_reply = ensure_wav_pcm16(wav_reply)
 
         # Spara och spela upp
         out_path = OUTPUT_WAV_PATH
