@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 from importlib import import_module
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -19,6 +21,44 @@ from .config import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_decode_wav_base64(candidate: str) -> Optional[bytes]:
+    if len(candidate) < 16:
+        return None
+    try:
+        decoded = base64.b64decode(candidate, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if decoded.startswith(b"RIFF"):
+        return decoded
+    return None
+
+
+def _extract_wav_from_json_payload(payload: Any) -> Optional[bytes]:
+    if isinstance(payload, dict):
+        for value in payload.values():
+            audio = _extract_wav_from_json_payload(value)
+            if audio is not None:
+                return audio
+    elif isinstance(payload, list):
+        for item in payload:
+            audio = _extract_wav_from_json_payload(item)
+            if audio is not None:
+                return audio
+    elif isinstance(payload, str):
+        audio = _maybe_decode_wav_base64(payload)
+        if audio is not None:
+            return audio
+    return None
+
+
+def _extract_wav_from_json_response(response: httpx.Response) -> Optional[bytes]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return _extract_wav_from_json_payload(payload)
 
 
 class BaseAIProvider:
@@ -154,7 +194,24 @@ class OpenAIProvider(BaseAIProvider):
                 json=payload,
             )
             response.raise_for_status()
-            return response.content
+            content_type = response.headers.get("content-type", "").lower()
+            if "application/json" in content_type or "text/" in content_type:
+                audio_bytes = _extract_wav_from_json_response(response)
+                if audio_bytes is not None:
+                    return audio_bytes
+                raise RuntimeError("OpenAI TTS returned JSON without WAV audio data.")
+
+            content = response.content
+            if content.startswith(b"RIFF"):
+                return content
+
+            # Some deployments might omit the JSON content-type header; try decoding
+            # the body as JSON before failing so that we never play garbage noise.
+            audio_bytes = _extract_wav_from_json_response(response)
+            if audio_bytes is not None:
+                return audio_bytes
+
+            raise RuntimeError("OpenAI TTS returned a non-WAV response.")
 
     async def create_embeddings(
         self, texts: Sequence[str], *, model: Optional[str] = None
