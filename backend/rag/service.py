@@ -9,7 +9,7 @@ from ..config import (
     RAG_MIN_SCORE,
     RAG_TOP_K,
 )
-from ..openai_client import create_embeddings, chat_reply_sv
+from ..ai import create_embeddings, chat_reply_sv
 from .ingest import load_sources_async
 from .storage import add_chunks, query_embeddings, reset as reset_index
 from .types import RetrievedChunk

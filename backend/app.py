@@ -18,7 +18,7 @@ from .audio import (
     list_input_devices,
     list_output_devices,
 )
-from .openai_client import stt_transcribe_wav, tts_speak_sv
+from .ai import stt_transcribe_wav, tts_speak_sv
 from .wakeword import WakeWordListener
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
 from .ui_settings import load_ui_settings, save_ui_settings, UISettings

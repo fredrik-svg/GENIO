@@ -3,8 +3,8 @@
 
 En lättviktig röstassistent för **Raspberry Pi 5** som pratar **svenska** och använder **OpenAI** för STT (tal→text), chatt och TTS (text→tal).
 - **Touch UI**: Enkel webbsida med stor knapp som startar lyssning.
-- **Wakeword**: Lokal "Hej kompis" via `openwakeword` (låg resursförbrukning).
-- **Naturligt tal**: TTS via OpenAI (t.ex. `gpt-4o-mini-tts`) – låter naturtroget och körs i molnet för att spara Pi-resurser.
+- **Wakeword**: Lokal aktivering via `openwakeword` (standardmodellen "hey_mycroft", låg resursförbrukning).
+- **Naturligt tal**: TTS via vald provider (standard `gpt-4o-mini-tts`) – låter naturtroget och körs i molnet för att spara Pi-resurser.
 - **Minimal belastning** på Pi: STT/TTS och språkmodell körs i molnet.
 - **RAG-kunskapsbas**: Indexera webbsidor och dokument lokalt och återanvänd innehållet vid svar.
 
@@ -35,7 +35,7 @@ chmod +x install.sh
 ```bash
 cp .env.sample .env
 nano .env
-# Sätt OPENAI_API_KEY och justera röst/modeller vid behov
+# Sätt OPENAI_API_KEY eller byt AI_PROVIDER/WAKEWORD_* vid behov
 ```
 
 5) **Kör**
@@ -93,20 +93,22 @@ SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
 
 ## Wakeword
 
-- Standardfras: **"Hej kompis"**
-- Byt fras i `backend/wakeword.py` (modell `openwakeword` + konfig i `WW_PHRASES`).
+- Standardmodell: **"hey_mycroft"** via OpenWakeWord (laddas ned automatiskt första gången).
+- Anpassa genom att sätta `WAKEWORD_MODELS` (förtränade namn) eller `WAKEWORD_MODEL_PATHS` (egna `.tflite`-filer).
+- `WAKEWORD_ENGINE` kan även sättas till `energy` för en enkel energitrigger om du saknar wakeword-modeller.
 - Wakeword körs i en bakgrundstråd och triggar samma flöde som touch-knappen.
 
 ## Arkitektur
 
 - **FastAPI backend** (`backend/app.py`): Endpoints för samtal + websockets för status.
 - **Mic**: `sounddevice` (alsa) med enkel energibaserad VAD + timeout.
-- **STT**: OpenAI Audio Transcriptions (`whisper-1` eller nyare).
-- **Chat**: `gpt-4o-mini` (snabbt/billigt) med svensk systemprompt.
-- **TTS**: OpenAI TTS (`gpt-4o-mini-tts`) → WAV → uppspelning med `aplay`.
-- **RAG**: Egen SQLite-baserad vektorstore + OpenAI embeddings (`text-embedding-3-small`).
+- **AI-provider**: `backend/ai.py` laddar OpenAI som standard men kan bytas ut via `AI_PROVIDER`.
+- **STT**: Standard `whisper-1` via vald provider (OpenAI om inget annat anges).
+- **Chat**: Standard `gpt-4o-mini` med svensk systemprompt (går att ersätta via provider-konfiguration).
+- **TTS**: Standard `gpt-4o-mini-tts` → WAV → uppspelning med `aplay`.
+- **RAG**: Egen SQLite-baserad vektorstore + embeddings från vald provider (default OpenAI `text-embedding-3-small`).
 - **Wakeword**: `openwakeword` (lokalt, låg CPU).
-- **Wakeword-modeller**: `openwakeword` laddar automatiskt hem standardmodellerna vid första körningen (cache i `~/.cache/openwakeword`).
+- **Wakeword-modeller**: OpenWakeWord laddar automatiskt hem standardmodellerna vid första körningen (cache i `~/.cache/openwakeword`).
 - **Frontend**: Statisk HTML/JS med stor touchknapp, status och text.
 
 ## Kunskapsbas (RAG)
@@ -154,12 +156,28 @@ Se `.env.sample`:
 - `RAG_MIN_SCORE=0.35`
 - `RAG_CHUNK_SIZE=400`
 - `RAG_CHUNK_OVERLAP=80`
+- `AI_PROVIDER=openai` (alias eller modulväg, t.ex. `backend.ai:EchoProvider`)
+- `AI_PROVIDER_CONFIG={}` (JSON-objekt med extra inställningar till vald provider)
+- `WAKEWORD_ENGINE=openwakeword` (sätt till `energy` för att stänga av wakeword-modeller)
+- `WAKEWORD_MODELS=hey_mycroft` (kommaseparerad lista över OpenWakeWord-modeller)
+- `WAKEWORD_MODEL_PATHS=` (kommaseparerad lista med egna `.tflite`-filer)
+- `WAKEWORD_MIN_ACTIVATIONS=2` (antal träffar i rad innan trigger)
+- `WAKEWORD_COOLDOWN=1.0` (sekunder innan wakeword kan trigga igen)
+
+### Byt AI-leverantör
+
+`backend/ai.py` hanterar alla samtal mot språk-/talmodeller. Standardaliaset är `openai`, men du kan:
+- Ange ett eget modulnamn + klass i `AI_PROVIDER` (t.ex. `my_package.provider:CustomProvider`).
+- Välja `backend.ai:EchoProvider` för ett enkelt offline-läge eller som exempel på egen implementation.
+- Skicka extra inställningar som JSON via `AI_PROVIDER_CONFIG`, exempelvis `{"base_url": "https://...", "api_key": "..."}`.
+
+Alla endpoints (`/api/converse`, RAG och TTS) använder samma provider, så ett byte slår igenom i hela backend.
 
 ## Kända tips
 
 - Om inget ljud hörs, testa: `aplay /usr/share/sounds/alsa/Front_Center.wav`
 - Justera `ENERGY_THRESHOLD` och mikrofonens nivå i `alsamixer`.
-- Om wakeword triggar för lätt, höj `DETECTION_THRESHOLD` i `backend/wakeword.py`.
+- Om wakeword triggar för lätt, höj `WAKEWORD_MIN_ACTIVATIONS` eller justera `detection_threshold` i `backend/app.py`.
 
 ## Licenser och beroenden
 
@@ -187,7 +205,7 @@ chmod +x install.sh
 4) **Miljövariabler**
 ```bash
 cp .env.sample .env
-nano .env  # sätt OPENAI_API_KEY
+nano .env  # sätt OPENAI_API_KEY eller byt AI_PROVIDER/WAKEWORD_* vid behov
 ```
 
 5) **Starta**

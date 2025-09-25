@@ -7,17 +7,25 @@ import threading
 import time
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
-try:
-    import pvporcupine
-except ImportError:  # pragma: no cover - optional dependency on Pi
-    pvporcupine = None  # type: ignore[assignment]
+try:  # pragma: no cover - optional dependency
+    from openwakeword import Model as _OpenWakeWordModel
+except ImportError:  # pragma: no cover - optional dependency missing in tests
+    _OpenWakeWordModel = None
 
+try:  # pragma: no cover - optional dependency
+    from openwakeword.utils import download_models as _openwakeword_download_models
+except Exception:  # pragma: no cover - optional dependency missing in tests
+    _openwakeword_download_models = None
 
 from .audio import _gather_fallback_sample_rates, _supports_input_sample_rate
 from .audio_settings import get_selected_input_device
-
-
-DEFAULT_PORCUPINE_KEYWORDS: Tuple[str, ...] = ("porcupine",)
+from .config import (
+    WAKEWORD_COOLDOWN,
+    WAKEWORD_ENGINE,
+    WAKEWORD_MIN_ACTIVATIONS,
+    WAKEWORD_MODELS,
+    WAKEWORD_MODEL_PATHS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,18 +120,56 @@ class WakeWordListener:
         on_detect: Callable[[], None],
         detection_threshold: float = 0.5,
         *,
+        engine: Optional[str] = None,
         fallback_energy_threshold: float = 0.2,
         fallback_required_blocks: int = 15,
+        min_activations: Optional[int] = None,
+        cooldown: Optional[float] = None,
     ):
         self.on_detect = on_detect
         self.detection_threshold = detection_threshold
         self._stop = threading.Event()
-        self._porcupine: Optional[Any] = None
         self._thread: Optional[threading.Thread] = None
         self._detector: Optional[_BaseWakeWordDetector] = None
         self._detector_name = "none"
+        self._cooldown = cooldown if cooldown is not None else WAKEWORD_COOLDOWN
+        self._min_activations = max(1, min_activations or WAKEWORD_MIN_ACTIVATIONS)
 
-        def configure_fallback_detector(reason: str) -> None:
+        requested_engine = (engine or WAKEWORD_ENGINE or "openwakeword").strip().lower()
+        candidates: List[str]
+        if requested_engine in {"", "auto", "any"}:
+            candidates = ["openwakeword", "energy"]
+        else:
+            candidates = [requested_engine]
+            if requested_engine != "energy":
+                candidates.append("energy")
+
+        failure_reasons: List[str] = []
+        for candidate in candidates:
+            if candidate == "openwakeword":
+                detector, reason = self._setup_openwakeword_detector(detection_threshold)
+                if detector:
+                    self._detector = detector
+                    self._detector_name = "openwakeword"
+                    break
+                if reason:
+                    failure_reasons.append(reason)
+                    logger.warning("%s; använder energibaserad fallback för wakeword.", reason)
+            elif candidate == "energy":
+                self._detector = _EnergyWakeWordDetector(
+                    energy_threshold=fallback_energy_threshold,
+                    required_consecutive_blocks=fallback_required_blocks,
+                    cooldown=self._cooldown,
+                )
+                self._detector_name = "energy"
+                break
+            else:
+                message = f"Unknown wake word engine '{candidate}' requested"
+                failure_reasons.append(message)
+                logger.warning(message)
+
+        if self._detector is None:
+            reason = "; ".join(failure_reasons) or "No wake word detector could be initialised"
             logger.warning(
                 "%s; falling back to simple energy-based trigger.",
                 reason,
@@ -131,32 +177,60 @@ class WakeWordListener:
             self._detector = _EnergyWakeWordDetector(
                 energy_threshold=fallback_energy_threshold,
                 required_consecutive_blocks=fallback_required_blocks,
+                cooldown=self._cooldown,
             )
             self._detector_name = "energy"
 
-        if pvporcupine is None:
-            configure_fallback_detector("pvporcupine is not installed")
-            return
+    def _setup_openwakeword_detector(
+        self, detection_threshold: float
+    ) -> tuple[Optional[_BaseWakeWordDetector], Optional[str]]:
+        if _OpenWakeWordModel is None:
+            return None, "openwakeword är inte installerat"
+
+        builtin_models = _parse_env_list(WAKEWORD_MODELS)
+        custom_paths = _parse_env_list(WAKEWORD_MODEL_PATHS)
+
+        if not builtin_models and not custom_paths:
+            builtin_models = ["hey_mycroft"]
+
+        if builtin_models and _openwakeword_download_models is not None:
+            try:  # pragma: no cover - nätverksberoende
+                _openwakeword_download_models(model_names=builtin_models)
+            except Exception as exc:  # pragma: no cover - bästa försök
+                logger.debug("Could not download OpenWakeWord models: %s", exc, exc_info=True)
+
+        kwargs: dict[str, Any] = {}
+        if builtin_models:
+            kwargs["wakeword_models"] = builtin_models
+        if custom_paths:
+            kwargs["custom_models"] = custom_paths
 
         try:
-            kwargs = _porcupine_create_kwargs(
-                detection_threshold,
-                keywords_env=os.getenv("PORCUPINE_KEYWORDS"),
-                keyword_paths_env=os.getenv("PORCUPINE_KEYWORD_PATHS"),
-                access_key=os.getenv("PICOVOICE_ACCESS_KEY"),
-            )
-        except ValueError as config_error:
-            configure_fallback_detector(str(config_error))
-            return
+            model = _OpenWakeWordModel(**kwargs)
+        except TypeError:
+            # fallback for äldre versioner som använder ``custom_paths``
+            if "custom_models" in kwargs:
+                alt_kwargs = dict(kwargs)
+                paths = alt_kwargs.pop("custom_models")
+                alt_kwargs["custom_paths"] = paths
+            else:
+                alt_kwargs = kwargs
+            try:
+                model = _OpenWakeWordModel(**alt_kwargs)
+            except Exception as exc:
+                return None, f"Kunde inte starta OpenWakeWord: {exc}"
+        except Exception as exc:
+            return None, f"Kunde inte starta OpenWakeWord: {exc}"
 
-        try:
-            self._porcupine = pvporcupine.create(**kwargs)
-        except Exception as exc:  # pragma: no cover - defensive guard against optional dependency issues
-            configure_fallback_detector(f"Porcupine could not be initialised: {exc}")
-            return
-
-        self._detector = _PorcupineWakeWordDetector(self._porcupine)
-        self._detector_name = "porcupine"
+        labels = _resolve_openwakeword_labels(model, builtin_models, custom_paths)
+        detector = _OpenWakeWordDetector(
+            model,
+            labels=labels,
+            detection_threshold=detection_threshold,
+            min_activations=self._min_activations,
+            cooldown=self._cooldown,
+        )
+        return detector, None
 
     def start(self):
         if self._detector is None:
@@ -183,6 +257,13 @@ class WakeWordListener:
         if threading.get_ident() != thread.ident:
             thread.join(timeout=0.5)
         self._thread = None
+
+        detector = self._detector
+        if detector is not None:
+            try:
+                detector.close()
+            except Exception:  # pragma: no cover - defensivt
+                logger.debug("Wake word detector close failed", exc_info=True)
 
     def is_running(self) -> bool:
         thread = self._thread
@@ -234,7 +315,7 @@ class WakeWordListener:
         samplerate = getattr(self._detector, "sample_rate", 16000)
         blocksize = getattr(self._detector, "frame_length", 512)
 
-        cooldown = getattr(self._detector, "cooldown", 2.0)
+        cooldown = getattr(self._detector, "cooldown", self._cooldown)
         device = get_selected_input_device()
 
         def resample_block(values, from_rate):
@@ -373,7 +454,7 @@ class WakeWordListener:
 
 
 class _BaseWakeWordDetector:
-    cooldown: float = 2.0
+    cooldown: float = WAKEWORD_COOLDOWN
     sample_rate: int = 16000
     frame_length: int = 512
 
@@ -384,28 +465,62 @@ class _BaseWakeWordDetector:
         return
 
 
-class _PorcupineWakeWordDetector(_BaseWakeWordDetector):
-    def __init__(self, porcupine_instance: Any) -> None:
-        self._porcupine = porcupine_instance
-        self.sample_rate = int(getattr(porcupine_instance, "sample_rate", 16000))
-        self.frame_length = int(getattr(porcupine_instance, "frame_length", 512))
-        self.cooldown = 1.0
+class _OpenWakeWordDetector(_BaseWakeWordDetector):
+    def __init__(
+        self,
+        model: Any,
+        *,
+        labels: Sequence[str],
+        detection_threshold: float,
+        min_activations: int,
+        cooldown: float,
+    ) -> None:
+        if min_activations <= 0:
+            raise ValueError("min_activations must be positive")
+        self._model = model
+        self._labels = [str(label) for label in labels] or ["wakeword"]
+        self._threshold = float(detection_threshold)
+        self._min_activations = int(min_activations)
+        self.cooldown = float(cooldown)
+        self.sample_rate = int(getattr(model, "sample_rate", 16000))
+        frame_length = (
+            getattr(model, "frame_length", None)
+            or getattr(model, "chunk_size", None)
+            or getattr(model, "samples_per_frame", None)
+            or getattr(model, "samples_per_inference", None)
+        )
+        self.frame_length = int(frame_length or 512)
+        self._streak = 0
 
     def process(self, audio) -> bool:
-        pcm = _ensure_int16(audio)
-        if _audio_length(pcm) != self.frame_length:
+        values = _ensure_float32(audio)
+        if _audio_length(values) == 0:
+            self._streak = 0
             return False
-        result = self._porcupine.process(pcm)
         try:
-            detected = int(result) >= 0
-        except (TypeError, ValueError):  # pragma: no cover - defensive conversion guard
-            detected = False
-        return detected
+            predictions = self._model.predict(values)
+        except Exception:  # pragma: no cover - defensivt skydd
+            logger.exception("OpenWakeWord prediction misslyckades")
+            return False
+
+        scores = _extract_prediction_scores(predictions, self._labels)
+        if any(score >= self._threshold for score in scores):
+            self._streak += 1
+        else:
+            self._streak = 0
+
+        if self._streak >= self._min_activations:
+            self._streak = 0
+            return True
+        return False
 
     def close(self) -> None:  # pragma: no cover - best effort cleanup
-        delete = getattr(self._porcupine, "delete", None)
-        if callable(delete):
-            delete()
+        reset = getattr(self._model, "reset", None)
+        if callable(reset):
+            reset()
+        close = getattr(self._model, "close", None)
+        if callable(close):
+            close()
 
 
 class _EnergyWakeWordDetector(_BaseWakeWordDetector):
@@ -416,7 +531,7 @@ class _EnergyWakeWordDetector(_BaseWakeWordDetector):
         *,
         energy_threshold: float = 0.2,
         required_consecutive_blocks: int = 15,
-        cooldown: float = 2.0,
+        cooldown: float = WAKEWORD_COOLDOWN,
         time_source: Optional[Callable[[], float]] = None,
     ) -> None:
         if required_consecutive_blocks <= 0:
@@ -450,6 +565,31 @@ class _EnergyWakeWordDetector(_BaseWakeWordDetector):
         return False
 
 
+def _resolve_openwakeword_labels(
+    model: Any, builtin_models: Sequence[str], custom_paths: Sequence[str]
+) -> List[str]:
+    for attr in ("labels", "wakeword_names", "model_names", "keywords"):
+        value = getattr(model, attr, None)
+        if isinstance(value, (list, tuple)) and value:
+            return [str(item) for item in value]
+    labels = [str(name) for name in builtin_models]
+    labels.extend(os.path.splitext(os.path.basename(path))[0] for path in custom_paths)
+    if not labels:
+        labels = ["wakeword"]
+    return labels
+
+
+def _extract_prediction_scores(predictions: Any, labels: Sequence[str]) -> List[float]:
+    if isinstance(predictions, dict):
+        return [float(predictions.get(label, 0.0)) for label in labels]
+
+    try:
+        items = dict(predictions)
+    except Exception:
+        return [0.0 for _ in labels]
+    return [float(items.get(label, 0.0)) for label in labels]
+
+
 def _audio_length(audio) -> int:
     try:
         return len(audio)
@@ -477,7 +617,19 @@ def _rms_energy(audio) -> float:
     return float(np.sqrt(np.mean(np.square(arr))))
 
 
-def _ensure_int16(audio: Sequence[float]):
+def _ensure_float32(audio: Sequence[float]):
+    try:
+        import numpy as np
+    except ImportError:  # pragma: no cover - numpy saknas endast i testmiljöer
+        return [float(sample) for sample in audio]
+
+    arr = np.asarray(audio, dtype=np.float32)
+    if arr.ndim > 1:
+        return arr.reshape(-1)
+    return arr
+
+
+def _ensure_int16(audio: Sequence[float]):  # pragma: no cover - kvar för bakåtkompatibilitet
     try:
         import numpy as np
     except ImportError:  # pragma: no cover - numpy saknas endast i testmiljöer
@@ -508,42 +660,4 @@ def _parse_env_list(value: Optional[str]) -> List[str]:
     return items
 
 
-def _clamp_sensitivity(value: float) -> float:
-    if math.isnan(value):  # pragma: no cover - defensive guard
-        return 0.5
-    return float(min(max(value, 0.0), 1.0))
-
-
-def _porcupine_create_kwargs(
-    detection_threshold: float,
-    *,
-    keywords_env: Optional[str],
-    keyword_paths_env: Optional[str],
-    access_key: Optional[str],
-) -> dict[str, Any]:
-    keyword_paths = _parse_env_list(keyword_paths_env)
-    keywords = _parse_env_list(keywords_env)
-
-    kwargs: dict[str, Any] = {}
-
-    if not access_key:
-        raise ValueError(
-            "PICOVOICE_ACCESS_KEY must be set to use Porcupine wake word detection"
-        )
-
-    if keyword_paths:
-        kwargs["keyword_paths"] = keyword_paths
-        count = len(keyword_paths)
-    else:
-        resolved_keywords = keywords or list(DEFAULT_PORCUPINE_KEYWORDS)
-        if not resolved_keywords:
-            raise ValueError("No Porcupine keywords configured")
-        kwargs["keywords"] = resolved_keywords
-        count = len(resolved_keywords)
-
-    sensitivity = _clamp_sensitivity(detection_threshold)
-    kwargs["sensitivities"] = [sensitivity] * count
-
-    kwargs["access_key"] = access_key
-
-    return kwargs
+__all__ = ["WakeWordListener"]
