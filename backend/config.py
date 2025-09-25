@@ -92,9 +92,3 @@ OUTPUT_WAV_PATH = env("OUTPUT_WAV_PATH", "/tmp/reply.wav")
 
 AI_PROVIDER = (env("AI_PROVIDER", "openai") or "openai").strip()
 AI_PROVIDER_CONFIG = env_json("AI_PROVIDER_CONFIG", "")
-
-WAKEWORD_ENGINE = (env("WAKEWORD_ENGINE", "openwakeword") or "openwakeword").strip()
-WAKEWORD_MODELS = env("WAKEWORD_MODELS", "hey_mycroft") or "hey_mycroft"
-WAKEWORD_MODEL_PATHS = env("WAKEWORD_MODEL_PATHS", "") or ""
-WAKEWORD_MIN_ACTIVATIONS = int(env("WAKEWORD_MIN_ACTIVATIONS", "2"))
-WAKEWORD_COOLDOWN = float(env("WAKEWORD_COOLDOWN", "1.0"))

@@ -1,9 +1,8 @@
 
-# Pi5 Swedish Voice Assistant (Touch + Wakeword)
+# Pi5 Swedish Voice Assistant
 
 En lättviktig röstassistent för **Raspberry Pi 5** som pratar **svenska** och använder **OpenAI** för STT (tal→text), chatt och TTS (text→tal).
 - **Touch UI**: Enkel webbsida med stor knapp som startar lyssning.
-- **Wakeword**: Lokal aktivering via `openwakeword` (standardmodellen "hey_mycroft", låg resursförbrukning).
 - **Naturligt tal**: TTS via vald provider (standard `gpt-4o-mini-tts`) – låter naturtroget och körs i molnet för att spara Pi-resurser.
 - **Minimal belastning** på Pi: STT/TTS och språkmodell körs i molnet.
 - **RAG-kunskapsbas**: Indexera webbsidor och dokument lokalt och återanvänd innehållet vid svar.
@@ -35,7 +34,7 @@ chmod +x install.sh
 ```bash
 cp .env.sample .env
 nano .env
-# Sätt OPENAI_API_KEY eller byt AI_PROVIDER/WAKEWORD_* vid behov
+# Sätt OPENAI_API_KEY eller justera AI_PROVIDER vid behov
 ```
 
 5) **Kör**
@@ -91,13 +90,6 @@ SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
 ~/apps/pi5-assistant/scripts/pi5-assistant-kiosk.sh
 ```
 
-## Wakeword
-
-- Standardmodell: **"hey_mycroft"** via OpenWakeWord (laddas ned automatiskt första gången).
-- Anpassa genom att sätta `WAKEWORD_MODELS` (förtränade namn) eller `WAKEWORD_MODEL_PATHS` (egna `.tflite`-filer).
-- `WAKEWORD_ENGINE` kan även sättas till `energy` för en enkel energitrigger om du saknar wakeword-modeller.
-- Wakeword körs i en bakgrundstråd och triggar samma flöde som touch-knappen.
-
 ## Arkitektur
 
 - **FastAPI backend** (`backend/app.py`): Endpoints för samtal + websockets för status.
@@ -107,8 +99,6 @@ SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
 - **Chat**: Standard `gpt-4o-mini` med svensk systemprompt (går att ersätta via provider-konfiguration).
 - **TTS**: Standard `gpt-4o-mini-tts` → WAV → uppspelning med `aplay`.
 - **RAG**: Egen SQLite-baserad vektorstore + embeddings från vald provider (default OpenAI `text-embedding-3-small`).
-- **Wakeword**: `openwakeword` (lokalt, låg CPU).
-- **Wakeword-modeller**: OpenWakeWord laddar automatiskt hem standardmodellerna vid första körningen (cache i `~/.cache/openwakeword`).
 - **Frontend**: Statisk HTML/JS med stor touchknapp, status och text.
 
 ## Kunskapsbas (RAG)
@@ -158,11 +148,6 @@ Se `.env.sample`:
 - `RAG_CHUNK_OVERLAP=80`
 - `AI_PROVIDER=openai` (alias eller modulväg, t.ex. `backend.ai:EchoProvider`)
 - `AI_PROVIDER_CONFIG={}` (JSON-objekt med extra inställningar till vald provider)
-- `WAKEWORD_ENGINE=openwakeword` (sätt till `energy` för att stänga av wakeword-modeller)
-- `WAKEWORD_MODELS=hey_mycroft` (kommaseparerad lista över OpenWakeWord-modeller)
-- `WAKEWORD_MODEL_PATHS=` (kommaseparerad lista med egna `.tflite`-filer)
-- `WAKEWORD_MIN_ACTIVATIONS=2` (antal träffar i rad innan trigger)
-- `WAKEWORD_COOLDOWN=1.0` (sekunder innan wakeword kan trigga igen)
 
 ### Byt AI-leverantör
 
@@ -177,11 +162,10 @@ Alla endpoints (`/api/converse`, RAG och TTS) använder samma provider, så ett 
 
 - Om inget ljud hörs, testa: `aplay /usr/share/sounds/alsa/Front_Center.wav`
 - Justera `ENERGY_THRESHOLD` och mikrofonens nivå i `alsamixer`.
-- Om wakeword triggar för lätt, höj `WAKEWORD_MIN_ACTIVATIONS` eller justera `detection_threshold` i `backend/app.py`.
 
 ## Licenser och beroenden
 
-Öppen källkod där möjligt (openwakeword, FastAPI). OpenAI är moln-API (kommersiellt). Se `requirements.txt`.
+Öppen källkod där möjligt (FastAPI m.fl.). OpenAI är moln-API (kommersiellt). Se `requirements.txt`.
 
 
 ## Installation via Git (GitHub)
@@ -205,7 +189,7 @@ chmod +x install.sh
 4) **Miljövariabler**
 ```bash
 cp .env.sample .env
-nano .env  # sätt OPENAI_API_KEY eller byt AI_PROVIDER/WAKEWORD_* vid behov
+nano .env  # sätt OPENAI_API_KEY eller justera AI_PROVIDER vid behov
 ```
 
 5) **Starta**
@@ -228,8 +212,8 @@ sudo systemctl start pi5-assistant
 
 ## Raspberry Pi OS 64-bit?
 
-Ja – projektet är avsett för **Raspberry Pi OS Bookworm 64-bit**. Det fungerar bäst där eftersom några paket
-(PortAudio, openwakeword m.fl.) är mest vältestade på 64-bit och vi vill ha bästa prestanda på Pi 5.
+Ja – projektet är avsett för **Raspberry Pi OS Bookworm 64-bit**. Det fungerar bäst där eftersom flera paket
+(PortAudio m.fl.) är mest vältestade på 64-bit och vi vill ha bästa prestanda på Pi 5.
 
 
 ## USB-mikrofon och Bluetooth-högtalare
