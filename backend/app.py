@@ -21,6 +21,13 @@ from .audio import (
 from .ai import stt_transcribe_wav, tts_speak_sv
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
 from .ui_settings import load_ui_settings, save_ui_settings, UISettings
+from .display_settings import (
+    describe_display_settings,
+    discover_display_targets,
+    load_display_settings,
+    normalize_display_target,
+    save_display_settings,
+)
 from .audio_settings import (
     extract_index,
     extract_manual_value,
@@ -302,6 +309,28 @@ async def lan_info(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/api/display/targets")
+async def get_display_targets() -> JSONResponse:
+    targets, warnings = discover_display_targets()
+    note = (
+        "Välj skärm från listan eller ange manuellt värde (t.ex. :0)."
+        if targets
+        else "Inga skärmar hittades automatiskt – ange värdet manuellt (t.ex. :0)."
+    )
+
+    payload: dict[str, object] = {"ok": True, "targets": targets, "note": note}
+    if warnings:
+        payload["warnings"] = warnings
+    return JSONResponse(payload)
+
+
+@app.get("/api/display/settings")
+async def get_display_settings() -> JSONResponse:
+    description = describe_display_settings()
+    description["ok"] = True
+    return JSONResponse(description)
+
+
 @app.get("/rag")
 async def rag_page_redirect():
     return RedirectResponse(url="/admin", status_code=307)
@@ -426,6 +455,13 @@ class AudioInputSettingsPayload(BaseModel):
     output_manual_value: str | None = Field(default=None, alias="outputManualValue")
 
 
+class DisplaySettingsPayload(BaseModel):
+    assistant_choice: str | None = Field(default=None, alias="assistantChoice")
+    assistant_manual: str | None = Field(default=None, alias="assistantManual")
+    display_choice: str | None = Field(default=None, alias="displayChoice")
+    display_manual: str | None = Field(default=None, alias="displayManual")
+
+
 @app.post("/api/ask")
 async def ask(payload: AskPayload):
     question = (payload.question or "").strip()
@@ -529,6 +565,63 @@ async def update_audio_settings(payload: AudioInputSettingsPayload):
         output_payload["error"] = output_error
 
     return JSONResponse({"ok": True, "input": input_payload, "output": output_payload})
+
+
+@app.post("/api/display/settings")
+async def update_display_settings(payload: DisplaySettingsPayload) -> JSONResponse:
+    def _prepare_display_selection(choice: str | None, manual: str | None, *, field: str) -> str | None:
+        if choice is None and manual is None:
+            return None
+
+        raw_choice = (choice or "").strip()
+        manual_value = normalize_display_target(manual)
+        lowered = raw_choice.lower()
+
+        if lowered in {"", "auto"}:
+            return manual_value if (not raw_choice and manual_value) else ""
+
+        if lowered == "manual":
+            if not manual_value:
+                raise ValueError(f"Ange ett värde för {field}.")
+            return manual_value
+
+        return normalize_display_target(raw_choice)
+
+    try:
+        assistant_value = _prepare_display_selection(
+            payload.assistant_choice,
+            payload.assistant_manual,
+            field="assistentens skärm",
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "field": "assistant"}, status_code=400)
+
+    try:
+        display_value = _prepare_display_selection(
+            payload.display_choice,
+            payload.display_manual,
+            field="visningslägets skärm",
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc), "field": "display"}, status_code=400)
+
+    settings = load_display_settings()
+    changed = False
+
+    if assistant_value is not None and settings.assistant_display != assistant_value:
+        settings.assistant_display = assistant_value
+        changed = True
+
+    if display_value is not None and settings.presentation_display != display_value:
+        settings.presentation_display = display_value
+        changed = True
+
+    if changed:
+        save_display_settings(settings)
+
+    description = describe_display_settings()
+    description["ok"] = True
+    return JSONResponse(description)
 
 
 class RAGIngestPayload(BaseModel):

@@ -322,6 +322,54 @@
       </div>
     </div>
 
+    <div class="card" id="display-card">
+      <div>
+        <h2>Välj skärmar</h2>
+        <p class="helper" id="display-helper">Söker skärmar ...</p>
+      </div>
+      <form id="display-form">
+        <div class="audio-group" id="assistant-display-group">
+          <h3>Assistent</h3>
+          <div class="field">
+            <label for="assistant-display-select">Skärm</label>
+            <select id="assistant-display-select" name="assistant-display">
+              <option value="auto">Systemets standard</option>
+              <option value="manual">Ange manuellt värde ...</option>
+            </select>
+            <small>Välj X11-display (t.ex. :0) eller ange manuellt värde.</small>
+          </div>
+          <div class="field" id="assistant-display-manual-field" style="display:none;">
+            <label for="assistant-display-manual">Manuell skärm</label>
+            <input id="assistant-display-manual" type="text" placeholder=":0" />
+            <small>Ange exakt displaynamn, t.ex. :0.1 eller ett Wayland-namn.</small>
+          </div>
+          <div class="status" id="assistant-display-status">Assistenten använder systemets standarddisplay.</div>
+        </div>
+        <div class="audio-group" id="presentation-display-group">
+          <h3>Visningsläge</h3>
+          <div class="field">
+            <label for="presentation-display-select">Skärm</label>
+            <select id="presentation-display-select" name="presentation-display">
+              <option value="auto">Systemets standard</option>
+              <option value="manual">Ange manuellt värde ...</option>
+            </select>
+            <small>Välj skärm för visningsläget.</small>
+          </div>
+          <div class="field" id="presentation-display-manual-field" style="display:none;">
+            <label for="presentation-display-manual">Manuell skärm</label>
+            <input id="presentation-display-manual" type="text" placeholder=":0.1" />
+            <small>Ange exakt displaynamn, t.ex. :0.1.</small>
+          </div>
+          <div class="status" id="presentation-display-status">Visningsläget använder systemets standarddisplay.</div>
+        </div>
+        <div class="grid">
+          <button class="btn secondary" type="button" id="display-refresh">Uppdatera lista</button>
+          <button class="btn" type="submit" id="display-save">Spara skärmar</button>
+        </div>
+      </form>
+      <div class="status" id="display-status"></div>
+    </div>
+
     <div class="card" id="audio-card">
       <div>
         <h2>Välj ljudenheter</h2>
@@ -417,6 +465,28 @@
     const lanStatus = document.getElementById('lan-status');
     const lanAdminList = document.getElementById('lan-admin-list');
     const lanDisplayList = document.getElementById('lan-display-list');
+    const displayForm = document.getElementById('display-form');
+    const displayHelper = document.getElementById('display-helper');
+    const displayStatus = document.getElementById('display-status');
+    const displayRefreshBtn = document.getElementById('display-refresh');
+    const displayControls = {
+      assistant: {
+        select: document.getElementById('assistant-display-select'),
+        manualField: document.getElementById('assistant-display-manual-field'),
+        manualInput: document.getElementById('assistant-display-manual'),
+        status: document.getElementById('assistant-display-status'),
+        defaultStatus: 'Assistenten använder systemets standarddisplay.'
+      },
+      display: {
+        select: document.getElementById('presentation-display-select'),
+        manualField: document.getElementById('presentation-display-manual-field'),
+        manualInput: document.getElementById('presentation-display-manual'),
+        status: document.getElementById('presentation-display-status'),
+        defaultStatus: 'Visningsläget använder systemets standarddisplay.'
+      }
+    };
+    const displayTargetsState = { list: [] };
+    let lastDisplaySettings = null;
     const audioForm = document.getElementById('audio-form');
     const audioControls = {
       input: {
@@ -472,6 +542,185 @@
           lanStatus.textContent = lanStatusDefault || '';
         }
       }, 3200);
+    }
+
+    function setDisplayStatus(text){
+      if(displayStatus){
+        displayStatus.textContent = text || '';
+      }
+    }
+
+    function toggleDisplayManualField(fieldEl, show){
+      if(!fieldEl){
+        return;
+      }
+      fieldEl.style.display = show ? '' : 'none';
+    }
+
+    function populateDisplayOptions(selectEl){
+      if(!selectEl){
+        return;
+      }
+      const previousValue = selectEl.value;
+      selectEl.innerHTML = '';
+
+      const autoOption = document.createElement('option');
+      autoOption.value = 'auto';
+      autoOption.textContent = 'Systemets standard';
+      selectEl.appendChild(autoOption);
+
+      const manualOption = document.createElement('option');
+      manualOption.value = 'manual';
+      manualOption.textContent = 'Ange manuellt värde ...';
+      selectEl.appendChild(manualOption);
+
+      const targets = Array.isArray(displayTargetsState.list) ? displayTargetsState.list : [];
+      targets.forEach((target) => {
+        if(!target || typeof target.value !== 'string'){
+          return;
+        }
+        const option = document.createElement('option');
+        option.value = target.value;
+        const label = typeof target.label === 'string' && target.label.trim()
+          ? target.label.trim()
+          : target.value;
+        option.textContent = label;
+        selectEl.appendChild(option);
+      });
+
+      const options = Array.from(selectEl.options || []);
+      const hasPrevious = options.some((opt) => opt.value === previousValue);
+      if(previousValue && hasPrevious){
+        selectEl.value = previousValue;
+      } else {
+        selectEl.value = 'auto';
+      }
+    }
+
+    function determineDisplaySelectValue(storedValue){
+      const trimmed = typeof storedValue === 'string' ? storedValue.trim() : '';
+      if(!trimmed){
+        return 'auto';
+      }
+      const targets = Array.isArray(displayTargetsState.list) ? displayTargetsState.list : [];
+      const exists = targets.some((target) => target && target.value === trimmed);
+      return exists ? trimmed : 'manual';
+    }
+
+    function applyDisplaySettingsData(data){
+      if(!data){
+        return;
+      }
+      lastDisplaySettings = data;
+
+      ['assistant', 'display'].forEach((key) => {
+        const ctrl = displayControls[key];
+        if(!ctrl || !ctrl.select){
+          return;
+        }
+
+        const info = data[key] && typeof data[key] === 'object' ? data[key] : {};
+        const storedRaw = typeof info.stored === 'string' ? info.stored.trim() : '';
+        const selectValue = determineDisplaySelectValue(storedRaw);
+
+        if(ctrl.select.value !== selectValue){
+          ctrl.select.value = selectValue;
+          if(ctrl.select.value !== selectValue){
+            ctrl.select.value = selectValue === 'manual' ? 'manual' : 'auto';
+          }
+        }
+
+        toggleDisplayManualField(ctrl.manualField, ctrl.select.value === 'manual');
+
+        if(ctrl.manualInput){
+          if(ctrl.select.value === 'manual'){
+            ctrl.manualInput.value = storedRaw;
+          } else if(ctrl.select.value === 'auto'){
+            ctrl.manualInput.value = '';
+          } else {
+            ctrl.manualInput.value = ctrl.select.value;
+          }
+        }
+
+        if(ctrl.status){
+          let message = typeof info.message === 'string' && info.message.trim()
+            ? info.message.trim()
+            : ctrl.defaultStatus;
+          if(storedRaw && selectValue === 'manual'){
+            message = `${message} (tidigare vald skärm hittades inte i listan).`;
+          }
+          ctrl.status.textContent = message;
+        }
+      });
+    }
+
+    async function refreshDisplayTargets(showLoading = true){
+      if(displayHelper && showLoading){
+        displayHelper.textContent = 'Söker skärmar ...';
+      }
+      try {
+        const res = await fetch('/api/display/targets');
+        const data = await res.json();
+        if(res.ok && data && data.ok){
+          displayTargetsState.list = Array.isArray(data.targets) ? data.targets : [];
+          if(displayHelper && typeof data.note === 'string'){
+            displayHelper.textContent = data.note;
+          }
+          if(Array.isArray(data.warnings) && data.warnings.length){
+            setDisplayStatus(data.warnings.join(' '));
+          } else if(showLoading){
+            setDisplayStatus('');
+          }
+        } else {
+          displayTargetsState.list = [];
+          const errorText = data && typeof data.error === 'string'
+            ? data.error
+            : 'Kunde inte hämta skärmar.';
+          if(displayHelper){
+            displayHelper.textContent = data && typeof data.note === 'string'
+              ? data.note
+              : 'Inga skärmar hittades automatiskt – ange värdet manuellt (t.ex. :0).';
+          }
+          setDisplayStatus(errorText);
+        }
+      } catch (err) {
+        console.error('Kunde inte hämta display-targets', err);
+        displayTargetsState.list = [];
+        if(displayHelper){
+          displayHelper.textContent = 'Kunde inte hämta skärmar. Ange värden manuellt.';
+        }
+        setDisplayStatus('Fel vid hämtning av skärmar.');
+      }
+
+      Object.values(displayControls).forEach((ctrl) => {
+        if(ctrl && ctrl.select){
+          populateDisplayOptions(ctrl.select);
+        }
+      });
+
+      if(lastDisplaySettings){
+        applyDisplaySettingsData(lastDisplaySettings);
+      }
+    }
+
+    async function loadDisplayConfiguration(){
+      setDisplayStatus('Hämtar skärminställningar ...');
+      try {
+        const res = await fetch('/api/display/settings');
+        const data = await res.json();
+        if(res.ok && data && data.ok){
+          setDisplayStatus('');
+          applyDisplaySettingsData(data);
+        } else {
+          const errorText = data && typeof data.error === 'string'
+            ? data.error
+            : 'Kunde inte hämta skärminställningar.';
+          setDisplayStatus(errorText);
+        }
+      } catch (err) {
+        console.error('Kunde inte hämta skärminställningar', err);
+        setDisplayStatus('Kunde inte hämta skärminställningar.');
+      }
     }
 
     function toggleAudioManualField(fieldEl, show){
@@ -850,6 +1099,99 @@
       updateNamePreview();
     }
 
+    Object.values(displayControls).forEach((ctrl) => {
+      if(!ctrl || !ctrl.select){
+        return;
+      }
+      ctrl.select.addEventListener('change', () => {
+        const value = ctrl.select.value;
+        toggleDisplayManualField(ctrl.manualField, value === 'manual');
+        if(ctrl.manualInput){
+          if(value === 'manual'){
+            if(!ctrl.manualInput.value){
+              ctrl.manualInput.focus();
+            }
+          } else if(value === 'auto'){
+            ctrl.manualInput.value = '';
+          } else {
+            ctrl.manualInput.value = value;
+          }
+        }
+      });
+      toggleDisplayManualField(ctrl.manualField, ctrl.select.value === 'manual');
+    });
+
+    if(displayRefreshBtn){
+      displayRefreshBtn.addEventListener('click', () => {
+        refreshDisplayTargets(true);
+      });
+    }
+
+    if(displayForm){
+      displayForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+
+        const assistantCtrl = displayControls.assistant;
+        const displayCtrl = displayControls.display;
+
+        if(!assistantCtrl || !assistantCtrl.select || !displayCtrl || !displayCtrl.select){
+          return;
+        }
+
+        const payload = {
+          assistantChoice: assistantCtrl.select.value,
+          assistantManual: assistantCtrl.manualInput ? assistantCtrl.manualInput.value.trim() : '',
+          displayChoice: displayCtrl.select.value,
+          displayManual: displayCtrl.manualInput ? displayCtrl.manualInput.value.trim() : ''
+        };
+
+        if(payload.assistantChoice === 'manual' && !payload.assistantManual){
+          setDisplayStatus('Ange ett manuellt värde för assistentens skärm.');
+          if(assistantCtrl.manualInput){
+            assistantCtrl.manualInput.focus();
+          }
+          return;
+        }
+
+        if(payload.displayChoice === 'manual' && !payload.displayManual){
+          setDisplayStatus('Ange ett manuellt värde för visningslägets skärm.');
+          if(displayCtrl.manualInput){
+            displayCtrl.manualInput.focus();
+          }
+          return;
+        }
+
+        setDisplayStatus('Sparar skärmar ...');
+
+        try {
+          const res = await fetch('/api/display/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          if(res.ok && data && data.ok){
+            setDisplayStatus('Skärmar sparade.');
+            applyDisplaySettingsData(data);
+          } else {
+            const errorText = data && typeof data.error === 'string'
+              ? data.error
+              : 'Kunde inte spara skärmarna.';
+            setDisplayStatus(errorText);
+            const field = data && typeof data.field === 'string' ? data.field : '';
+            if(field === 'assistant' && assistantCtrl.manualInput){
+              assistantCtrl.manualInput.focus();
+            } else if(field === 'display' && displayCtrl.manualInput){
+              displayCtrl.manualInput.focus();
+            }
+          }
+        } catch (err) {
+          console.error('Kunde inte spara skärmar', err);
+          setDisplayStatus('Ett fel inträffade vid sparande av skärmar.');
+        }
+      });
+    }
+
     Object.values(audioControls).forEach((ctrl) => {
       if(!ctrl || !ctrl.select){
         return;
@@ -1075,6 +1417,8 @@
       }
     });
 
+    refreshDisplayTargets();
+    loadDisplayConfiguration();
     loadAudioDevices();
     loadLanLinks();
     loadSettings();

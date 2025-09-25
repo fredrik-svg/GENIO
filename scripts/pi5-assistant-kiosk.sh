@@ -65,6 +65,50 @@ fi
 
 PRIMARY_URL="${PRIMARY_URL:-http://localhost:${APP_PORT}}"
 SECONDARY_URL="${SECONDARY_URL:-http://localhost:${APP_PORT}/display}"
+
+DISPLAY_SETTINGS_PATH="$PROJECT_DIR/backend/display_settings.json"
+DISPLAY_SETTING_ASSISTANT=""
+DISPLAY_SETTING_PRESENTATION=""
+if [[ -f "$DISPLAY_SETTINGS_PATH" ]]; then
+    PYTHON_BIN=""
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="python"
+    fi
+
+    if [[ -n "$PYTHON_BIN" ]]; then
+        if mapfile -t DISPLAY_SETTINGS_LINES < <("$PYTHON_BIN" - "$DISPLAY_SETTINGS_PATH" <<'PYCODE'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
+
+assistant = (data.get("assistantDisplay") or "").strip()
+presentation = (data.get("displayDisplay") or "").strip()
+print(assistant)
+print(presentation)
+PYCODE
+        ); then
+            DISPLAY_SETTING_ASSISTANT="${DISPLAY_SETTINGS_LINES[0]-}"
+            DISPLAY_SETTING_PRESENTATION="${DISPLAY_SETTINGS_LINES[1]-}"
+        fi
+    fi
+fi
+
+if [[ -z "${PRIMARY_DISPLAY_TARGET:-}" && -n "$DISPLAY_SETTING_ASSISTANT" ]]; then
+    PRIMARY_DISPLAY_TARGET="$DISPLAY_SETTING_ASSISTANT"
+fi
+
+if [[ -z "${SECONDARY_DISPLAY_TARGET:-}" && -n "$DISPLAY_SETTING_PRESENTATION" ]]; then
+    SECONDARY_DISPLAY_TARGET="$DISPLAY_SETTING_PRESENTATION"
+fi
+
 PRIMARY_DISPLAY_TARGET="${PRIMARY_DISPLAY_TARGET:-${DISPLAY:-:0}}"
 SECONDARY_DISPLAY_TARGET="${SECONDARY_DISPLAY_TARGET:-$PRIMARY_DISPLAY_TARGET}"
 SECONDARY_DISPLAY_MODE="${SECONDARY_DISPLAY_MODE:-auto}"
