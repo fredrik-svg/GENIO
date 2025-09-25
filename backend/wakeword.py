@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - optional dependency on Pi
     pvporcupine = None  # type: ignore[assignment]
 
 
+from .audio import _gather_fallback_sample_rates
 from .audio_settings import get_selected_input_device
 
 
@@ -150,29 +151,117 @@ class WakeWordListener:
         blocksize = getattr(self._detector, "frame_length", 512)
 
         cooldown = getattr(self._detector, "cooldown", 2.0)
+        device = get_selected_input_device()
 
-        def open_stream():
-            stream = sd.InputStream(
-                device=get_selected_input_device(),
-                channels=1,
-                samplerate=samplerate,
-                blocksize=blocksize,
-                dtype="float32",
-            )
-            stream.start()
-            return stream
+        def resample_block(values, from_rate):
+            if from_rate == samplerate or blocksize <= 0:
+                return values
+            length = len(values)
+            if length == 0:
+                return values
+
+            duration = length / float(from_rate)
+            target_length = blocksize if blocksize > 0 else int(round(duration * samplerate))
+            target_length = max(1, target_length)
+
+            if np is not None:
+                old_times = np.linspace(
+                    0.0,
+                    duration,
+                    num=length,
+                    endpoint=False,
+                    dtype=np.float64,
+                )
+                new_times = np.linspace(
+                    0.0,
+                    duration,
+                    num=target_length,
+                    endpoint=False,
+                    dtype=np.float64,
+                )
+                return np.interp(new_times, old_times, values).astype(np.float32, copy=False)
+
+            if length == 1:
+                return [float(values[0])] * target_length
+
+            original_step = duration / length
+            target_step = duration / target_length
+            result: List[float] = []
+            for i in range(target_length):
+                t = i * target_step
+                position = t / original_step
+                lower = int(math.floor(position))
+                if lower >= length - 1:
+                    result.append(float(values[-1]))
+                    continue
+                upper = lower + 1
+                fraction = position - lower
+                lower_value = float(values[lower])
+                upper_value = float(values[upper])
+                result.append(lower_value * (1.0 - fraction) + upper_value * fraction)
+            return result
+
+        def start_stream():
+            last_error: Optional[Exception] = None
+
+            def open_with_rate(rate: int):
+                adjusted_blocksize = max(1, int(round(blocksize * rate / float(samplerate))))
+                stream = sd.InputStream(
+                    device=device,
+                    channels=1,
+                    samplerate=rate,
+                    blocksize=adjusted_blocksize,
+                    dtype="float32",
+                )
+                stream.start()
+                return stream, adjusted_blocksize
+
+            try:
+                stream, adjusted_blocksize = open_with_rate(samplerate)
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Failed to start wake word audio stream at %d Hz: %s",
+                    samplerate,
+                    exc,
+                )
+            else:
+                return stream, samplerate, adjusted_blocksize
+
+            for candidate_rate in _gather_fallback_sample_rates(device, {samplerate}):
+                try:
+                    stream, adjusted_blocksize = open_with_rate(candidate_rate)
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(
+                        "Failed to start wake word audio stream at %d Hz: %s",
+                        candidate_rate,
+                        exc,
+                    )
+                    continue
+                logger.info(
+                    "Wake word listener using fallback sample rate %d Hz",
+                    candidate_rate,
+                )
+                return stream, candidate_rate, adjusted_blocksize
+
+            if last_error is None:
+                last_error = RuntimeError("Unable to open audio input stream")
+            raise last_error
 
         stream = None
+        effective_sample_rate = samplerate
+        frames_per_read = blocksize
         try:
             try:
-                stream = open_stream()
+                stream, effective_sample_rate, frames_per_read = start_stream()
             except Exception as exc:  # pragma: no cover - defensive guard
                 logger.error("Could not start wake word audio stream: %s", exc)
                 return
 
             while not self._stop.is_set():
                 try:
-                    audio_block, _ = stream.read(blocksize)
+                    audio_block, _ = stream.read(frames_per_read)
                 except Exception as exc:  # pragma: no cover - defensive
                     if self._stop.is_set():
                         break
@@ -183,6 +272,9 @@ class WakeWordListener:
                     y = audio_block[:, 0].astype(np.float32, copy=False)
                 else:  # pragma: no cover - numpy saknas endast i testmiljöer
                     y = [float(sample[0]) for sample in audio_block]
+
+                if effective_sample_rate != samplerate:
+                    y = resample_block(y, effective_sample_rate)
 
                 if not self._detector.process(y):
                     continue
@@ -211,7 +303,7 @@ class WakeWordListener:
                     break
 
                 try:
-                    stream = open_stream()
+                    stream, effective_sample_rate, frames_per_read = start_stream()
                 except Exception as exc:  # pragma: no cover - defensive guard
                     logger.error("Could not restart wake word audio stream: %s", exc)
                     break
