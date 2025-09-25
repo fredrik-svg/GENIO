@@ -71,6 +71,26 @@ sed -i "s|/home/pi/apps/pi5-assistant|$PWD|" \
 
 > Genvägen startar backend om den inte redan kör och öppnar sedan Chromium i helskärmsläge på `http://localhost:8080`.
 
+#### Två skärmar (kiosk + visning)
+
+Kioskskriptet kan även öppna **två** Chromium-fönster: huvudassistenten och visningsläget (`/display`).
+
+- Standardläget (`SECONDARY_DISPLAY_MODE=auto`) försöker upptäcka minst två skärmar via `xrandr` innan ett extra fönster startas.
+- Sätt `SECONDARY_DISPLAY_MODE=always` om du vill tvinga två fönster även utan automatisk upptäckt.
+- Välj X11-skärm (t.ex. `:0.0` och `:0.1`) med `PRIMARY_DISPLAY_TARGET` och `SECONDARY_DISPLAY_TARGET` om du använder separata display-heads.
+- Varje Chromium-instans använder en egen profilkatalog under `.chromium-profiles/` (kan ändras med `CHROMIUM_PROFILE_BASE`).
+- Extra argument kan skickas via `PRIMARY_BROWSER_EXTRA_ARGS` respektive `SECONDARY_BROWSER_EXTRA_ARGS` (blankstegsseparerade flaggor).
+
+Exempel – starta två fönster där `/display` hamnar på skärm `:0.1`:
+
+```bash
+SECONDARY_DISPLAY_MODE=always \
+PRIMARY_DISPLAY_TARGET=:0.0 \
+SECONDARY_DISPLAY_TARGET=:0.1 \
+SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
+~/apps/pi5-assistant/scripts/pi5-assistant-kiosk.sh
+```
+
 ## Wakeword
 
 - Standardfras: **"Hej kompis"**
