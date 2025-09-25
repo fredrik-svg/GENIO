@@ -10,6 +10,11 @@ pytest.importorskip("httpx")
 from backend import ai
 
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 def _make_wav_bytes():
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wav_file:
@@ -52,7 +57,7 @@ class _ClientRecorder:
         return self._response
 
 
-@pytest.mark.anyio
+@pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_decodes_json_wav(monkeypatch):
     wav_bytes = _make_wav_bytes()
     payload = {"data": base64.b64encode(wav_bytes).decode("ascii")}
@@ -76,7 +81,30 @@ async def test_openai_synthesize_decodes_json_wav(monkeypatch):
     assert recorder.post_calls[0]["json"]["input"] == "hej"
 
 
-@pytest.mark.anyio
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_accepts_data_uri_audio(monkeypatch):
+    wav_bytes = _make_wav_bytes()
+    payload = {
+        "audio": "data:audio/wav;base64," + base64.b64encode(wav_bytes).decode("ascii")
+    }
+    response = _DummyResponse(payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="model",
+        tts_voice="alloy",
+    )
+
+    audio_bytes = await provider.synthesize("hallå")
+
+    assert audio_bytes == wav_bytes
+
+
+@pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_errors_on_missing_audio(monkeypatch):
     payload = {"data": "not-audio"}
     response = _DummyResponse(payload, headers={"content-type": "application/json"})
