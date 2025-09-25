@@ -8,7 +8,7 @@ import struct
 import time
 import wave
 
-from typing import BinaryIO, cast
+from typing import BinaryIO, Literal, cast
 
 import numpy as np
 if not getattr(wave.open, "__genio_pathlike__", False):  # pragma: no cover - exercised in tests
@@ -49,7 +49,7 @@ def _sounddevice_error():
 def _sounddevice_available() -> bool:
     return _sounddevice_error() is None
 
-from .audio_settings import get_selected_input_device
+from .audio_settings import get_selected_input_device, get_selected_output_device
 from .config import (
     ENERGY_THRESHOLD,
     MAX_RECORD_SECONDS,
@@ -508,12 +508,16 @@ def play_wav_bytes(data: bytes) -> None:
         )
         return
 
-    sd.play(audio, samplerate=sample_rate)
+    device = get_selected_output_device()
+    if device is None:
+        sd.play(audio, samplerate=sample_rate)
+    else:
+        sd.play(audio, samplerate=sample_rate, device=device)
     sd.wait()
 
 
-def list_input_devices():
-    """Returnera (lista, felmeddelande)."""
+def _list_devices(kind: Literal["input", "output"]):
+    """Returnera (lista, felmeddelande) för *kind*."""
 
     error = _sounddevice_error()
     if error is not None:
@@ -522,7 +526,7 @@ def list_input_devices():
     try:
         raw_devices = sd.query_devices()
     except Exception as exc:  # pragma: no cover - defensiv loggning
-        logger.error("Could not query audio input devices: %s", exc)
+        logger.error("Could not query audio %s devices: %s", kind, exc)
         return [], f"Kunde inte läsa ljudenheter: {exc}"
 
     hostapi_names: dict[int, str] = {}
@@ -545,26 +549,30 @@ def list_input_devices():
             continue
         hostapi_names[index_int] = str(name_value)
 
-    default_input_index = None
+    default_index = None
     try:
         default_device = getattr(getattr(sd, "default", None), "device", None)
         if isinstance(default_device, (tuple, list)) and default_device:
-            default_input_index = int(default_device[0])
+            position = 0 if kind == "input" else (1 if len(default_device) > 1 else 0)
+            default_index = int(default_device[position])
         elif isinstance(default_device, (int, float)):
-            default_input_index = int(default_device)
+            default_index = int(default_device)
     except Exception:  # pragma: no cover - defensiv
-        default_input_index = None
+        default_index = None
+
+    channel_attr = "max_input_channels" if kind == "input" else "max_output_channels"
+    channel_key = "maxInputChannels" if kind == "input" else "maxOutputChannels"
 
     devices: list[dict[str, object]] = []
     for idx, info in enumerate(raw_devices):
         if isinstance(info, dict):
-            channels = info.get("max_input_channels")
+            channels = info.get(channel_attr)
             index_value = info.get("index", idx)
             name_value = info.get("name")
             default_rate = info.get("default_samplerate")
             hostapi_index = info.get("hostapi")
         else:
-            channels = getattr(info, "max_input_channels", None)
+            channels = getattr(info, channel_attr, None)
             index_value = getattr(info, "index", idx)
             name_value = getattr(info, "name", None)
             default_rate = getattr(info, "default_samplerate", None)
@@ -591,13 +599,25 @@ def list_input_devices():
         entry = {
             "index": index_int,
             "name": name_str,
-            "maxInputChannels": int(channels),
+            channel_key: int(channels),
             "defaultSampleRate": sample_rate,
             "hostapi": hostapi_name,
-            "isDefault": default_input_index is not None and index_int == default_input_index,
+            "isDefault": default_index is not None and index_int == default_index,
             "value": f"index:{index_int}",
         }
 
         devices.append(entry)
 
     return devices, None
+
+
+def list_input_devices():
+    """Returnera (lista, felmeddelande) för ljudingångar."""
+
+    return _list_devices("input")
+
+
+def list_output_devices():
+    """Returnera (lista, felmeddelande) för ljudutgångar."""
+
+    return _list_devices("output")

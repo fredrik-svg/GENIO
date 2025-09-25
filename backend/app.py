@@ -2,13 +2,21 @@
 import asyncio, io, os, subprocess, logging, shlex, socket, uuid
 from contextlib import suppress
 from ipaddress import ip_address
+from typing import Literal
+
 from fastapi import FastAPI, WebSocket, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
 
-from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH, INPUT_DEVICE
-from .audio import record_until_silence, save_wav_mono16, play_wav_bytes, list_input_devices
+from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH, INPUT_DEVICE, OUTPUT_DEVICE
+from .audio import (
+    record_until_silence,
+    save_wav_mono16,
+    play_wav_bytes,
+    list_input_devices,
+    list_output_devices,
+)
 from .openai_client import stt_transcribe_wav, tts_speak_sv
 from .wakeword import WakeWordListener
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
@@ -17,9 +25,12 @@ from .audio_settings import (
     extract_index,
     extract_manual_value,
     get_raw_input_device_selection,
+    get_raw_output_device_selection,
     get_selected_input_device,
+    get_selected_output_device,
     serialize_device_spec,
     set_selected_input_device,
+    set_selected_output_device,
 )
 
 logger = logging.getLogger(__name__)
@@ -150,10 +161,20 @@ def _format_device_display(spec: str | int | None, devices: list[dict[str, objec
     return str(spec)
 
 
-def _audio_devices_payload():
-    devices, devices_error = list_input_devices()
+def _audio_devices_payload(kind: Literal["input", "output"]):
+    if kind == "input":
+        devices, devices_error = list_input_devices()
+        stored_raw = get_raw_input_device_selection()
+        effective_spec = get_selected_input_device()
+        fallback_env = (INPUT_DEVICE or "").strip()
+        noun = "ljudkälla"
+    else:
+        devices, devices_error = list_output_devices()
+        stored_raw = get_raw_output_device_selection()
+        effective_spec = get_selected_output_device()
+        fallback_env = (OUTPUT_DEVICE or "").strip()
+        noun = "ljudutgång"
 
-    stored_raw = get_raw_input_device_selection()
     manual_value = extract_manual_value(stored_raw)
     selected_option = "auto"
     if stored_raw:
@@ -162,8 +183,6 @@ def _audio_devices_payload():
         else:
             selected_option = stored_raw
 
-    effective_spec = get_selected_input_device()
-    fallback_env = (INPUT_DEVICE or "").strip()
     effective_display = _format_device_display(effective_spec, devices)
     effective_serialized = serialize_device_spec(effective_spec)
 
@@ -185,20 +204,21 @@ def _audio_devices_payload():
     elif stored_raw and selected_option not in {"auto", "manual"}:
         selected_available = any(stored_raw == device.get("value") for device in devices)
 
-    message = "Ingen specifik ljudkälla vald – systemets standard används."
-    if effective_source == "stored" and stored_raw:
-        message = f"Aktiv ljudkälla: {effective_display}."
-    elif effective_source == "env" and fallback_env:
-        message = f"Aktiv ljudkälla via miljövariabel: {effective_display}."
-    elif effective_source == "system":
-        message = "Ingen specifik ljudkälla vald – systemets standard används."
-
+    default_message = f"Ingen specifik {noun} vald – systemets standard används."
     if devices_error:
         message = devices_error
-    elif not selected_available and stored_raw:
+    elif effective_source == "stored" and stored_raw:
+        message = f"Aktiv {noun}: {effective_display}."
+    elif effective_source == "env" and fallback_env:
+        message = f"Aktiv {noun} via miljövariabel: {effective_display}."
+    else:
+        message = default_message
+
+    if not devices_error and not selected_available and stored_raw:
         message = f"{message.rstrip('.')} (tidigare vald enhet hittades inte)."
 
     payload: dict[str, object] = {
+        "kind": kind,
         "devices": devices,
         "devicesOk": devices_error is None,
         "selected": stored_raw,
@@ -422,6 +442,8 @@ class AskPayload(BaseModel):
 class AudioInputSettingsPayload(BaseModel):
     input_device: str | None = Field(default=None, alias="inputDevice")
     manual_value: str | None = Field(default=None, alias="manualValue")
+    output_device: str | None = Field(default=None, alias="outputDevice")
+    output_manual_value: str | None = Field(default=None, alias="outputManualValue")
 
 
 @app.post("/api/ask")
@@ -457,7 +479,18 @@ async def ask(payload: AskPayload):
 
 @app.get("/api/audio/input-devices")
 async def get_audio_input_devices():
-    payload, error = _audio_devices_payload()
+    payload, error = _audio_devices_payload("input")
+    devices_ok = bool(payload.get("devicesOk"))
+    payload["ok"] = devices_ok
+    if error and "error" not in payload:
+        payload["error"] = error
+    status_code = 200 if devices_ok else 503
+    return JSONResponse(payload, status_code=status_code)
+
+
+@app.get("/api/audio/output-devices")
+async def get_audio_output_devices():
+    payload, error = _audio_devices_payload("output")
     devices_ok = bool(payload.get("devicesOk"))
     payload["ok"] = devices_ok
     if error and "error" not in payload:
@@ -468,28 +501,54 @@ async def get_audio_input_devices():
 
 @app.post("/api/audio/settings")
 async def update_audio_settings(payload: AudioInputSettingsPayload):
-    choice = (payload.input_device or "").strip()
-    manual_value = (payload.manual_value or "").strip()
+    def _prepare_selection(choice: str | None, manual_value: str | None) -> str | None:
+        provided = choice is not None or manual_value is not None
+        if not provided:
+            return None
 
-    if choice == "manual":
-        selection = f"manual:{manual_value}"
-    elif not choice or choice.lower() in {"auto", "default"}:
-        selection = ""
-    elif choice.startswith("manual:") and manual_value:
-        selection = f"manual:{manual_value}"
-    else:
-        selection = choice
+        raw_choice = (choice or "").strip()
+        manual = (manual_value or "").strip()
 
-    try:
-        set_selected_input_device(selection)
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        if raw_choice == "manual":
+            raw_choice = f"manual:{manual}"
+        elif raw_choice.startswith("manual:") and manual:
+            raw_choice = f"manual:{manual}"
+        elif not raw_choice and manual:
+            raw_choice = f"manual:{manual}"
 
-    payload_data, devices_error = _audio_devices_payload()
-    payload_data["ok"] = True
-    if devices_error and "devicesError" not in payload_data:
-        payload_data["devicesError"] = devices_error
-    return JSONResponse(payload_data)
+        return raw_choice
+
+    input_selection = _prepare_selection(payload.input_device, payload.manual_value)
+    if input_selection is not None:
+        try:
+            set_selected_input_device(input_selection)
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "field": "input"}, status_code=400
+            )
+
+    output_selection = _prepare_selection(
+        payload.output_device, payload.output_manual_value
+    )
+    if output_selection is not None:
+        try:
+            set_selected_output_device(output_selection)
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "error": str(exc), "field": "output"}, status_code=400
+            )
+
+    input_payload, input_error = _audio_devices_payload("input")
+    input_payload["ok"] = bool(input_payload.get("devicesOk"))
+    if input_error and "error" not in input_payload:
+        input_payload["error"] = input_error
+
+    output_payload, output_error = _audio_devices_payload("output")
+    output_payload["ok"] = bool(output_payload.get("devicesOk"))
+    if output_error and "error" not in output_payload:
+        output_payload["error"] = output_error
+
+    return JSONResponse({"ok": True, "input": input_payload, "output": output_payload})
 
 
 class RAGIngestPayload(BaseModel):

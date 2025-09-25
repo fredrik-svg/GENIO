@@ -3,7 +3,7 @@ import os
 
 from pydantic import BaseModel, Field
 
-from .config import INPUT_DEVICE
+from .config import INPUT_DEVICE, OUTPUT_DEVICE
 
 
 _INDEX_PREFIX = "index:"
@@ -15,6 +15,7 @@ class AudioSettings(BaseModel):
     """Persisted ljudinställningar för backend."""
 
     input_device: str = Field(default="", alias="inputDevice")
+    output_device: str = Field(default="", alias="outputDevice")
 
 
 def _ensure_directory_exists(path: str) -> None:
@@ -45,9 +46,7 @@ def save_audio_settings(settings: AudioSettings) -> None:
         json.dump(settings.model_dump(by_alias=True), fh, indent=2, ensure_ascii=False)
 
 
-def normalize_input_device_selection(raw: str | None) -> str:
-    """Normalisera användarens val till lagringsformat."""
-
+def _normalize_device_selection(raw: str | None) -> str:
     if raw is None:
         return ""
 
@@ -62,25 +61,37 @@ def normalize_input_device_selection(raw: str | None) -> str:
     if value.startswith(_INDEX_PREFIX):
         rest = value[len(_INDEX_PREFIX) :].strip()
         if not rest:
-            raise ValueError("Index för ljudkälla saknas.")
+            raise ValueError("Index för ljudenhet saknas.")
         try:
             index = int(rest)
         except ValueError as exc:  # pragma: no cover - validering
-            raise ValueError("Ogiltigt index för ljudkälla.") from exc
+            raise ValueError("Ogiltigt index för ljudenhet.") from exc
         if index < 0:
-            raise ValueError("Index för ljudkälla måste vara 0 eller större.")
+            raise ValueError("Index för ljudenhet måste vara 0 eller större.")
         return f"{_INDEX_PREFIX}{index}"
 
     if value.startswith(_MANUAL_PREFIX):
         rest = value[len(_MANUAL_PREFIX) :].strip()
         if not rest:
-            raise ValueError("Ingen manuell ljudkälla angavs.")
+            raise ValueError("Ingen manuell ljudenhet angavs.")
         return f"{_MANUAL_PREFIX}{rest}"
 
     if value.isdigit():
         return f"{_INDEX_PREFIX}{int(value)}"
 
     return value
+
+
+def normalize_input_device_selection(raw: str | None) -> str:
+    """Normalisera användarens val av inspelningskälla."""
+
+    return _normalize_device_selection(raw)
+
+
+def normalize_output_device_selection(raw: str | None) -> str:
+    """Normalisera användarens val av uppspelningsenhet."""
+
+    return _normalize_device_selection(raw)
 
 
 def set_selected_input_device(selection: str | None) -> AudioSettings:
@@ -93,7 +104,17 @@ def set_selected_input_device(selection: str | None) -> AudioSettings:
     return settings
 
 
-def _decode_input_device(value: str | None) -> str | int | None:
+def set_selected_output_device(selection: str | None) -> AudioSettings:
+    """Spara vald ljudutgång."""
+
+    normalized = normalize_output_device_selection(selection)
+    settings = load_audio_settings()
+    settings.output_device = normalized
+    save_audio_settings(settings)
+    return settings
+
+
+def _decode_device(value: str | None) -> str | int | None:
     if not value:
         return None
 
@@ -128,11 +149,25 @@ def _decode_input_device(value: str | None) -> str | int | None:
 def get_selected_input_device() -> str | int | None:
     """Returnera det faktiska värdet som ska användas av ljudinspelningen."""
 
-    stored = _decode_input_device(load_audio_settings().input_device)
+    stored = _decode_device(load_audio_settings().input_device)
     if stored is not None:
         return stored
 
-    fallback = _decode_input_device(INPUT_DEVICE)
+    fallback = _decode_device(INPUT_DEVICE)
+    if fallback is not None:
+        return fallback
+
+    return None
+
+
+def get_selected_output_device() -> str | int | None:
+    """Returnera det värde som ska användas för uppspelning."""
+
+    stored = _decode_device(load_audio_settings().output_device)
+    if stored is not None:
+        return stored
+
+    fallback = _decode_device(OUTPUT_DEVICE)
     if fallback is not None:
         return fallback
 
@@ -143,6 +178,12 @@ def get_raw_input_device_selection() -> str:
     """Returnera sparat råvärde (kan vara tom sträng)."""
 
     return load_audio_settings().input_device.strip()
+
+
+def get_raw_output_device_selection() -> str:
+    """Returnera sparat råvärde för ljudutgången."""
+
+    return load_audio_settings().output_device.strip()
 
 
 def extract_manual_value(selection: str | None) -> str:
@@ -169,7 +210,7 @@ def serialize_device_spec(spec: str | int | None) -> str:
 def extract_index(selection: str | None) -> int | None:
     """Returnera index om lagrad sträng syftar på en sifferidentitet."""
 
-    decoded = _decode_input_device(selection)
+    decoded = _decode_device(selection)
     if isinstance(decoded, int):
         return decoded
     return None
@@ -179,11 +220,15 @@ __all__ = [
     "AudioSettings",
     "extract_index",
     "extract_manual_value",
+    "get_raw_output_device_selection",
     "get_raw_input_device_selection",
+    "get_selected_output_device",
     "get_selected_input_device",
     "load_audio_settings",
     "normalize_input_device_selection",
+    "normalize_output_device_selection",
     "save_audio_settings",
     "serialize_device_spec",
+    "set_selected_output_device",
     "set_selected_input_device",
 ]

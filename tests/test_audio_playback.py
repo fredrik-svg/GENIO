@@ -13,8 +13,8 @@ class DummySoundDevice:
         self.play_calls = []
         self.wait_calls = 0
 
-    def play(self, data, samplerate):
-        self.play_calls.append((np.array(data, copy=True), samplerate))
+    def play(self, data, samplerate, device=None):
+        self.play_calls.append((np.array(data, copy=True), samplerate, device))
 
     def wait(self):
         self.wait_calls += 1
@@ -56,9 +56,10 @@ def test_play_wav_bytes_handles_pcm16(sounddevice_stub):
     wav_bytes = _make_pcm16_wav(samples, sample_rate=16000)
     audio.play_wav_bytes(wav_bytes)
     assert sounddevice_stub.play_calls, "sd.play should have been invoked"
-    played_audio, samplerate = sounddevice_stub.play_calls[0]
+    played_audio, samplerate, device = sounddevice_stub.play_calls[0]
     np.testing.assert_allclose(played_audio, np.array(samples, dtype=np.float32), atol=1e-4)
     assert samplerate == 16000
+    assert device is None
     assert sounddevice_stub.wait_calls == 1
 
 
@@ -67,7 +68,19 @@ def test_play_wav_bytes_handles_float32(sounddevice_stub):
     wav_bytes = _make_float32_wav(samples, sample_rate=22050)
     audio.play_wav_bytes(wav_bytes)
     assert sounddevice_stub.play_calls, "sd.play should have been invoked"
-    played_audio, samplerate = sounddevice_stub.play_calls[-1]
+    played_audio, samplerate, device = sounddevice_stub.play_calls[-1]
     np.testing.assert_allclose(played_audio, np.array(samples, dtype=np.float32))
     assert samplerate == 22050
+    assert device is None
     assert sounddevice_stub.wait_calls == 1
+
+
+def test_play_wav_bytes_uses_selected_output_device(sounddevice_stub, monkeypatch):
+    monkeypatch.setattr(audio, "get_selected_output_device", lambda: 7)
+    samples = [0.0, 0.1]
+    wav_bytes = _make_pcm16_wav(samples, sample_rate=8000)
+    audio.play_wav_bytes(wav_bytes)
+    assert sounddevice_stub.play_calls, "sd.play should have been invoked"
+    _, samplerate, device = sounddevice_stub.play_calls[-1]
+    assert samplerate == 8000
+    assert device == 7
