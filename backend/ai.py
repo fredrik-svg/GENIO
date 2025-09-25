@@ -47,22 +47,69 @@ def _maybe_decode_wav_base64(candidate: str) -> Optional[bytes]:
     return None
 
 
-def _extract_wav_from_json_payload(payload: Any) -> Optional[bytes]:
-    if isinstance(payload, dict):
-        for value in payload.values():
-            audio = _extract_wav_from_json_payload(value)
-            if audio is not None:
-                return audio
-    elif isinstance(payload, list):
-        for item in payload:
-            audio = _extract_wav_from_json_payload(item)
-            if audio is not None:
-                return audio
-    elif isinstance(payload, str):
+def _gather_wav_chunks(payload: Any, *, in_audio: bool = False) -> list[bytes]:
+    """Return a list of decoded WAV byte chunks discovered in *payload*."""
+
+    if isinstance(payload, str):
         audio = _maybe_decode_wav_base64(payload)
         if audio is not None:
-            return audio
-    return None
+            return [audio]
+        if in_audio:
+            try:
+                decoded = base64.b64decode(payload)
+            except (binascii.Error, ValueError):
+                return []
+            return [decoded] if decoded else []
+
+    if isinstance(payload, dict):
+        chunks: list[bytes] = []
+
+        if "audio" in payload:
+            chunks.extend(_gather_wav_chunks(payload["audio"], in_audio=True))
+
+        if "b64_json" in payload:
+            chunks.extend(_gather_wav_chunks(payload["b64_json"], in_audio=in_audio))
+
+        if "data" in payload:
+            data_value = payload["data"]
+            if isinstance(data_value, list):
+                data_chunks: list[bytes] = []
+                for item in data_value:
+                    data_chunks.extend(_gather_wav_chunks(item, in_audio=in_audio))
+                if data_chunks:
+                    chunks.append(b"".join(data_chunks))
+            else:
+                chunks.extend(_gather_wav_chunks(data_value, in_audio=in_audio))
+
+        for key, value in payload.items():
+            if key in {"b64_json", "data", "audio"}:
+                continue
+            chunks.extend(_gather_wav_chunks(value, in_audio=in_audio))
+
+        return chunks
+
+    if isinstance(payload, list):
+        chunks: list[bytes] = []
+        for item in payload:
+            chunks.extend(_gather_wav_chunks(item, in_audio=in_audio))
+        return chunks
+
+    return []
+
+
+def _extract_wav_from_json_payload(payload: Any) -> Optional[bytes]:
+    chunks = _gather_wav_chunks(payload)
+    if not chunks:
+        return None
+    if len(chunks) == 1:
+        return chunks[0]
+
+    for index, chunk in enumerate(chunks):
+        if chunk.startswith((b"RIFF", b"RIFX")):
+            tail = b"".join(chunks[:index] + chunks[index + 1 :])
+            return chunk + tail
+
+    return b"".join(chunks)
 
 
 def _extract_wav_from_json_response(response: httpx.Response) -> Optional[bytes]:

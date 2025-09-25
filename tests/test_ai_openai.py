@@ -121,3 +121,82 @@ async def test_openai_synthesize_errors_on_missing_audio(monkeypatch):
 
     with pytest.raises(RuntimeError):
         await provider.synthesize("hej")
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_supports_responses_audio_structure(monkeypatch):
+    wav_bytes = _make_wav_bytes()
+    payload = {
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Hej!"},
+                    {
+                        "type": "output_audio",
+                        "audio": {
+                            "id": "audio_0",
+                            "format": "wav",
+                            "data": base64.b64encode(wav_bytes).decode("ascii"),
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+    response = _DummyResponse(payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="model",
+        tts_voice="alloy",
+    )
+
+    audio_bytes = await provider.synthesize("hej")
+
+    assert audio_bytes == wav_bytes
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_joins_chunked_audio_payload(monkeypatch):
+    wav_bytes = _make_wav_bytes()
+    first_chunk = wav_bytes[: len(wav_bytes) // 2]
+    second_chunk = wav_bytes[len(wav_bytes) // 2 :]
+    payload = {
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_audio",
+                        "audio": {
+                            "format": "wav",
+                            "data": [
+                                {"index": 0, "data": base64.b64encode(first_chunk).decode("ascii")},
+                                {"index": 1, "data": base64.b64encode(second_chunk).decode("ascii")},
+                            ],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    response = _DummyResponse(payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="model",
+        tts_voice="alloy",
+    )
+
+    audio_bytes = await provider.synthesize("hej")
+
+    assert audio_bytes == wav_bytes
