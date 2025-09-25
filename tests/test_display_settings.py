@@ -128,3 +128,61 @@ def test_discover_display_targets_wayland(monkeypatch):
     assert monitor["width"] == 1920
     assert "WL-1" in wayland_entry["label"]
     assert "1920x1080" in wayland_entry["label"]
+
+
+def test_discover_display_targets_wayland_registry(monkeypatch):
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-2")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/fake-runtime")
+
+    def fake_listdir(path):
+        if path == "/fake-runtime":
+            return ["wayland-2"]
+        if path == "/tmp/.X11-unix":
+            raise FileNotFoundError
+        raise AssertionError(f"Unexpected listdir path: {path}")
+
+    def fake_check_output(cmd, text, stderr, env):  # noqa: ARG001
+        if cmd and cmd[0] == "wayland-info":
+            assert env.get("WAYLAND_DISPLAY") == "wayland-2"
+            return json.dumps(
+                {
+                    "registry": {
+                        "globals": [
+                            {
+                                "interface": "wl_output",
+                                "output": {
+                                    "name": "WL-2",
+                                    "make": "RegMake",
+                                    "model": "RegModel",
+                                    "description": "Registry Monitor",
+                                    "scale": 1,
+                                    "modes": [
+                                        {
+                                            "width": 2560,
+                                            "height": 1440,
+                                            "refresh": 144000,
+                                            "flags": ["current"],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        raise FileNotFoundError
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+    monkeypatch.setattr(display_settings.subprocess, "check_output", fake_check_output)
+
+    targets, warnings = display_settings.discover_display_targets()
+
+    assert warnings == []
+    wayland_entry = next(entry for entry in targets if entry["value"] == "wayland-2")
+    assert wayland_entry["monitors"]
+    monitor = wayland_entry["monitors"][0]
+    assert monitor["name"] == "WL-2"
+    assert monitor["width"] == 2560
+    assert "WL-2" in wayland_entry["label"]
+    assert "2560x1440" in wayland_entry["label"]

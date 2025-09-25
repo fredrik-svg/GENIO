@@ -324,64 +324,75 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
             wayland_cache[value] = []
             return []
 
-        globals_info = data.get("globals")
-        if not isinstance(globals_info, list):
+        globals_sources: list[list[dict[str, Any]]] = []
+
+        def _collect_globals(candidate: Any) -> None:
+            if isinstance(candidate, list):
+                globals_sources.append([item for item in candidate if isinstance(item, dict)])
+
+        _collect_globals(data.get("globals"))
+        registry_info = data.get("registry")
+        if isinstance(registry_info, dict):
+            _collect_globals(registry_info.get("globals"))
+
+        if not globals_sources:
             wayland_cache[value] = []
             return []
 
         monitors: list[dict[str, Any]] = []
-        for index, item in enumerate(globals_info):
-            if not isinstance(item, dict):
-                continue
-            if item.get("interface") != "wl_output":
-                continue
-            output_info = item.get("output")
-            if not isinstance(output_info, dict):
-                continue
-            name = output_info.get("name")
-            description = output_info.get("description") if isinstance(output_info.get("description"), str) else None
-            make = output_info.get("make") if isinstance(output_info.get("make"), str) else None
-            model = output_info.get("model") if isinstance(output_info.get("model"), str) else None
-            scale = output_info.get("scale")
-            modes = output_info.get("modes")
-            current_mode: dict[str, Any] | None = None
-            if isinstance(modes, list):
-                for mode in modes:
-                    if not isinstance(mode, dict):
-                        continue
-                    flags = mode.get("flags")
-                    if isinstance(flags, list) and "current" in flags:
-                        current_mode = mode
-                        break
-                if current_mode is None and modes:
-                    first_mode = modes[0]
-                    if isinstance(first_mode, dict):
-                        current_mode = first_mode
+        for globals_info in globals_sources:
+            for index, item in enumerate(globals_info):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("interface") != "wl_output":
+                    continue
+                output_info = item.get("output")
+                if not isinstance(output_info, dict):
+                    continue
+                name = output_info.get("name")
+                description = output_info.get("description") if isinstance(output_info.get("description"), str) else None
+                make = output_info.get("make") if isinstance(output_info.get("make"), str) else None
+                model = output_info.get("model") if isinstance(output_info.get("model"), str) else None
+                scale = output_info.get("scale")
+                modes = output_info.get("modes")
+                current_mode: dict[str, Any] | None = None
+                if isinstance(modes, list):
+                    for mode in modes:
+                        if not isinstance(mode, dict):
+                            continue
+                        flags = mode.get("flags")
+                        if isinstance(flags, list) and "current" in flags:
+                            current_mode = mode
+                            break
+                    if current_mode is None and modes:
+                        first_mode = modes[0]
+                        if isinstance(first_mode, dict):
+                            current_mode = first_mode
 
-            width = current_mode.get("width") if isinstance(current_mode, dict) else None
-            height = current_mode.get("height") if isinstance(current_mode, dict) else None
-            refresh = current_mode.get("refresh") if isinstance(current_mode, dict) else None
-            refresh_hz = None
-            if isinstance(refresh, (int, float)):
-                refresh_hz = float(refresh)
-                if refresh_hz > 1000:
-                    refresh_hz = refresh_hz / 1000.0
+                width = current_mode.get("width") if isinstance(current_mode, dict) else None
+                height = current_mode.get("height") if isinstance(current_mode, dict) else None
+                refresh = current_mode.get("refresh") if isinstance(current_mode, dict) else None
+                refresh_hz = None
+                if isinstance(refresh, (int, float)):
+                    refresh_hz = float(refresh)
+                    if refresh_hz > 1000:
+                        refresh_hz = refresh_hz / 1000.0
 
-            monitors.append(
-                {
-                    "index": index,
-                    "name": name if isinstance(name, str) else None,
-                    "description": description,
-                    "make": make,
-                    "model": model,
-                    "scale": scale,
-                    "width": width if isinstance(width, int) else None,
-                    "height": height if isinstance(height, int) else None,
-                    "refresh": refresh,
-                    "refreshHz": refresh_hz,
-                    "active": current_mode is not None,
-                }
-            )
+                monitors.append(
+                    {
+                        "index": index,
+                        "name": name if isinstance(name, str) else None,
+                        "description": description,
+                        "make": make,
+                        "model": model,
+                        "scale": scale,
+                        "width": width if isinstance(width, int) else None,
+                        "height": height if isinstance(height, int) else None,
+                        "refresh": refresh,
+                        "refreshHz": refresh_hz,
+                        "active": current_mode is not None,
+                    }
+                )
 
         wayland_cache[value] = monitors
         return monitors
