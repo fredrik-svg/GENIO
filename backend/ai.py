@@ -24,14 +24,26 @@ logger = logging.getLogger(__name__)
 
 
 def _maybe_decode_wav_base64(candidate: str) -> Optional[bytes]:
-    if len(candidate) < 16:
+    text = candidate.strip()
+    if not text:
         return None
-    try:
-        decoded = base64.b64decode(candidate, validate=True)
-    except (binascii.Error, ValueError):
+
+    if text.startswith("data:"):
+        _prefix, _sep, rest = text.partition(",")
+        if not _sep:
+            return None
+        text = rest.strip()
+
+    if len(text) < 16:
         return None
-    if decoded.startswith(b"RIFF"):
-        return decoded
+
+    for strict in (True, False):
+        try:
+            decoded = base64.b64decode(text, validate=strict)
+        except (binascii.Error, ValueError):
+            continue
+        if decoded.startswith((b"RIFF", b"RIFX")):
+            return decoded
     return None
 
 
