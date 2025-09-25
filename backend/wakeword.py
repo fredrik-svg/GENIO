@@ -202,7 +202,7 @@ class WakeWordListener:
             return result
 
         def supports_rate(rate: int) -> bool:
-            return audio._supports_input_sample_rate(device, 1, "float32", rate)
+            return _supports_input_sample_rate(device, 1, "float32", rate)
 
         def start_stream():
             last_error: Optional[Exception] = None
