@@ -62,13 +62,14 @@ def test_stream_fallback_runs_even_when_support_check_rejects(monkeypatch):
         pass
 
     class DummyStream:
-        def __init__(self, *, samplerate, blocksize, **_kwargs):
-            attempts.append((samplerate, blocksize))
+        def __init__(self, *, samplerate, blocksize, dtype, **_kwargs):
+            attempts.append((samplerate, blocksize, dtype))
             if samplerate != 48000:
                 raise DummyPortAudioError("unsupported sample rate")
             self.samplerate = samplerate
             self.blocksize = blocksize
             self.started = False
+            self.dtype = dtype
 
         def start(self):
             self.started = True
@@ -89,7 +90,12 @@ def test_stream_fallback_runs_even_when_support_check_rejects(monkeypatch):
         lambda device, excluded: [48000],
     )
 
-    stream, effective_rate, frames_per_read = wakeword._open_wake_word_input_stream(
+    (
+        stream,
+        effective_rate,
+        frames_per_read,
+        dtype,
+    ) = wakeword._open_wake_word_input_stream(
         dummy_sd,
         samplerate=16000,
         blocksize=512,
@@ -99,4 +105,66 @@ def test_stream_fallback_runs_even_when_support_check_rejects(monkeypatch):
     assert effective_rate == 48000
     assert frames_per_read == 1536
     assert stream.started is True
-    assert attempts == [(16000, 512), (48000, 1536)]
+    assert dtype == "float32"
+    assert attempts == [
+        (16000, 512, "float32"),
+        (16000, 512, "int16"),
+        (48000, 1536, "float32"),
+    ]
+
+
+def test_stream_fallback_uses_int16_when_float32_fails(monkeypatch):
+    attempts = []
+
+    class DummyPortAudioError(Exception):
+        pass
+
+    class DummyStream:
+        def __init__(self, *, samplerate, blocksize, dtype, **_kwargs):
+            attempts.append((samplerate, blocksize, dtype))
+            if dtype == "float32":
+                raise DummyPortAudioError("float unsupported")
+            self.samplerate = samplerate
+            self.blocksize = blocksize
+            self.dtype = dtype
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    dummy_sd = SimpleNamespace(
+        InputStream=DummyStream,
+        PortAudioError=DummyPortAudioError,
+    )
+
+    monkeypatch.setattr(
+        wakeword,
+        "_supports_input_sample_rate",
+        lambda device, channels, dtype, rate: True,
+    )
+    monkeypatch.setattr(
+        wakeword,
+        "_gather_fallback_sample_rates",
+        lambda device, excluded: [],
+    )
+
+    (
+        stream,
+        effective_rate,
+        frames_per_read,
+        dtype,
+    ) = wakeword._open_wake_word_input_stream(
+        dummy_sd,
+        samplerate=16000,
+        blocksize=256,
+        device=None,
+    )
+
+    assert effective_rate == 16000
+    assert frames_per_read == 256
+    assert stream.started is True
+    assert dtype == "int16"
+    assert attempts == [
+        (16000, 256, "float32"),
+        (16000, 256, "int16"),
+    ]
