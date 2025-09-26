@@ -308,8 +308,10 @@ class OpenAIProvider(BaseAIProvider):
                 return transcript
             logger.warning("Voice API saknade transkriberad text – återgår till klassisk STT.")
         except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
+            status = exc.response.status_code if exc.response is not None else "okänt"
+            body = exc.response.text if exc.response is not None else "<ingen text>"
             logger.error(
-                "OpenAI Voice API-transkription misslyckades (%s): %s", exc.response.status_code, exc
+                "OpenAI Voice API-transkription misslyckades (%s): %s – svar: %s", status, exc, body
             )
         except Exception as exc:  # pragma: no cover - nätverksfel
             logger.error("Kunde inte kontakta OpenAI Voice API för transkription: %s", exc)
@@ -392,10 +394,13 @@ class OpenAIProvider(BaseAIProvider):
         try:
             response_payload = await self._post_responses(payload)
         except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
+            status = exc.response.status_code if exc.response is not None else "okänt"
+            body = exc.response.text if exc.response is not None else "<ingen text>"
             logger.error(
-                "OpenAI Voice API-chatt misslyckades (%s): %s",
-                exc.response.status_code if exc.response is not None else "okänt",
+                "OpenAI Voice API-chatt misslyckades (%s): %s – svar: %s",
+                status,
                 exc,
+                body,
             )
             return await self._legacy_chat_reply(user_text, context_sections=context_sections)
         except Exception as exc:  # pragma: no cover - nätverksfel
@@ -411,9 +416,14 @@ class OpenAIProvider(BaseAIProvider):
 
     async def synthesize(self, text: str) -> bytes:
         self._require_api_key()
+        cleaned_text = text.strip()
+        if not cleaned_text:
+            raise ValueError("Kan inte generera tal från tom text.")
+
         payload = {
             "model": self._tts_model,
-            "input": text,
+            "modalities": ["audio"],
+            "input": cleaned_text,
             "audio": {"voice": self._tts_voice, "format": "wav"},
         }
 
@@ -421,6 +431,8 @@ class OpenAIProvider(BaseAIProvider):
             response_payload = await self._post_responses(payload)
         except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
             status = exc.response.status_code if exc.response is not None else "okänt"
+            body = exc.response.text if exc.response is not None else "<ingen text>"
+            logger.error("OpenAI Voice API-TTS misslyckades (%s): %s – svar: %s", status, exc, body)
             raise RuntimeError(f"OpenAI Voice API-TTS misslyckades ({status}).") from exc
 
         audio_bytes = _extract_wav_from_json_payload(response_payload)
