@@ -81,7 +81,14 @@ async def test_openai_synthesize_decodes_json_wav(monkeypatch):
     assert recorder.post_calls[0]["url"].endswith("/responses")
     assert request_json["model"] == "model"
     assert request_json["audio"] == {"voice": "alloy", "format": "wav"}
-    assert request_json["input"] == "hej"
+    assert request_json["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "hej"},
+            ],
+        }
+    ]
 
 
 @pytest.mark.anyio("asyncio")
@@ -239,7 +246,7 @@ async def test_openai_chat_reply_uses_responses_api(monkeypatch):
     request_json = recorder.post_calls[0]["json"]
     assert recorder.post_calls[0]["url"].endswith("/responses")
     assert request_json["model"] == "model"
-    assert request_json["modalities"] == ["text"]
+    assert request_json["input"][0]["role"] == "system"
     assert request_json["input"][-1]["role"] == "user"
     assert request_json["input"][-1]["content"][0]["type"] == "input_text"
     # Context should be present in a system message
@@ -274,7 +281,8 @@ async def test_openai_chat_reply_falls_back_to_legacy(monkeypatch):
 
     assert reply == "Fallback-svar"
     assert "payload" in call_args
-    assert call_args["payload"]["modalities"] == ["text"]
+    assert call_args["payload"]["input"][0]["role"] == "system"
+    assert call_args["payload"]["input"][-1]["role"] == "user"
     assert recorder.post_calls, "Fallback chat completions should have been invoked"
     assert recorder.post_calls[0]["url"].endswith("/chat/completions")
 
