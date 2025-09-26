@@ -1,9 +1,9 @@
 
 # Pi5 Swedish Voice Assistant
 
-En lättviktig röstassistent för **Raspberry Pi 5** som pratar **svenska** och använder **OpenAI** för STT (tal→text), chatt och TTS (text→tal).
+En lättviktig röstassistent för **Raspberry Pi 5** som pratar **svenska** och använder **OpenAI Voice API** för STT (tal→text), chatt och TTS (text→tal).
 - **Touch UI**: Enkel webbsida med stor knapp som startar lyssning.
-- **Naturligt tal**: TTS via vald provider (standard `gpt-4o-mini-tts`) – låter naturtroget och körs i molnet för att spara Pi-resurser.
+- **Naturligt tal**: TTS via vald provider (standard `gpt-4o-mini-tts` på OpenAI Voice API) – låter naturtroget och körs i molnet för att spara Pi-resurser.
 - **Minimal belastning** på Pi: STT/TTS och språkmodell körs i molnet.
 - **RAG-kunskapsbas**: Indexera webbsidor och dokument lokalt och återanvänd innehållet vid svar.
 
@@ -95,7 +95,7 @@ SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
 - **FastAPI backend** (`backend/app.py`): Endpoints för samtal + websockets för status.
 - **Mic**: `sounddevice` (alsa) med enkel energibaserad VAD + timeout.
 - **AI-provider**: `backend/ai.py` laddar OpenAI som standard men kan bytas ut via `AI_PROVIDER`.
-- **STT**: Standard `whisper-1` via vald provider (OpenAI om inget annat anges).
+- **STT**: Standard `gpt-4o-mini-transcribe` via OpenAI Voice API (kan justeras via miljövariabel).
 - **Chat**: Standard `gpt-4o-mini` med svensk systemprompt (går att ersätta via provider-konfiguration).
 - **TTS**: Standard `gpt-4o-mini-tts` → WAV → uppspelning med `aplay`.
 - **RAG**: Egen SQLite-baserad vektorstore + embeddings från vald provider (default OpenAI `text-embedding-3-small`).
@@ -133,7 +133,7 @@ Se `.env.sample`:
 - `CHAT_MODEL=gpt-4o-mini`
 - `TTS_MODEL=gpt-4o-mini-tts`
 - `TTS_VOICE=alloy`  (alternativ: "verse", "aria" m.fl. beroende på tillgänglighet)
-- `STT_MODEL=whisper-1`
+- `STT_MODEL=gpt-4o-mini-transcribe`
 - `SAMPLE_RATE=16000`
 - `FALLBACK_SAMPLE_RATES=48000,44100,32000,24000,22050,16000,11025,8000`
 - `MAX_RECORD_SECONDS=12`
