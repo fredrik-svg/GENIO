@@ -336,7 +336,7 @@ class OpenAIProvider(BaseAIProvider):
         self._require_api_key()
 
         def _make_content(role: str, text: str, *, is_user: bool = False) -> Dict[str, Any]:
-            entry_type = "input_text" if is_user else "text"
+            entry_type = "input_text"
             return {"role": role, "content": [{"type": entry_type, "text": text}]}
 
         inputs: List[Dict[str, Any]] = [
