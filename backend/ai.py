@@ -290,11 +290,20 @@ class OpenAIProvider(BaseAIProvider):
         audio_payload = base64.b64encode(wav_bytes).decode("ascii") if wav_bytes else ""
         voice_request = {
             "model": self._stt_model,
-            "modalities": ["text"],
-            "input_audio": [
+            "input": [
                 {
-                    "data": audio_payload,
-                    "format": "wav",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "audio": [
+                                {
+                                    "data": audio_payload,
+                                    "format": "wav",
+                                }
+                            ],
+                        }
+                    ],
                 }
             ],
         }
@@ -387,7 +396,6 @@ class OpenAIProvider(BaseAIProvider):
 
         payload = {
             "model": self._chat_model,
-            "modalities": ["text"],
             "input": inputs,
         }
 
@@ -422,8 +430,14 @@ class OpenAIProvider(BaseAIProvider):
 
         payload = {
             "model": self._tts_model,
-            "modalities": ["audio"],
-            "input": cleaned_text,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": cleaned_text},
+                    ],
+                }
+            ],
             "audio": {"voice": self._tts_voice, "format": "wav"},
         }
 
