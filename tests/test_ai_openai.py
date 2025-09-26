@@ -277,3 +277,58 @@ async def test_openai_chat_reply_falls_back_to_legacy(monkeypatch):
     assert call_args["payload"]["modalities"] == ["text"]
     assert recorder.post_calls, "Fallback chat completions should have been invoked"
     assert recorder.post_calls[0]["url"].endswith("/chat/completions")
+
+
+def test_extract_text_handles_multiple_shapes():
+    payload = {
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Hej"},
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Hur mår du?"},
+                        ],
+                    },
+                ],
+            }
+        ],
+        "tool_response": {
+            "output_text": ["Allt är bra!"],
+        },
+    }
+
+    text = ai._extract_text_from_json_payload(payload)
+
+    assert text == "Hej\nHur mår du?\nAllt är bra!"
+
+
+def test_extract_text_skips_user_text():
+    payload = {
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Hej, assistent"}],
+            }
+        ],
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Hej!"},
+                    {
+                        "type": "output_text",
+                        "text": "Hur kan jag hjälpa dig?",
+                    },
+                ],
+            }
+        ],
+        "output_text": ["Hej!", "Hur kan jag hjälpa dig?"],
+    }
+
+    text = ai._extract_text_from_json_payload(payload)
+
+    assert text == "Hej!\nHur kan jag hjälpa dig?"

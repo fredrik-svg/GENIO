@@ -125,28 +125,69 @@ def _extract_text_from_json_payload(payload: Any) -> str:
 
     texts: list[str] = []
 
-    def _walk(node: Any) -> None:
+    def _append(text: str | None) -> None:
+        if not text:
+            return
+        stripped = text.strip()
+        if stripped:
+            texts.append(stripped)
+
+    def _walk(node: Any, *, role: Optional[str] = None) -> None:
         if isinstance(node, dict):
+            node_role = node.get("role") if isinstance(node.get("role"), str) else role
             node_type = node.get("type")
-            if node_type == "output_text":
-                text_value = node.get("text")
-                if isinstance(text_value, str):
-                    texts.append(text_value)
-            elif node_type == "response.output_text":
-                text_value = node.get("text")
-                if isinstance(text_value, str):
-                    texts.append(text_value)
+
+            text_value = node.get("text") if isinstance(node.get("text"), str) else None
+
+            if node_type in {"output_text", "response.output_text"}:
+                _append(text_value)
+            elif node_type == "text" and node_role in {None, "assistant"}:
+                _append(text_value)
+
+            output_text_value = node.get("output_text")
+            if isinstance(output_text_value, str):
+                _append(output_text_value)
+            elif isinstance(output_text_value, list):
+                for item in output_text_value:
+                    if isinstance(item, str):
+                        _append(item)
+                    else:
+                        _walk(item, role=node_role)
+
+            child_nodes: list[Any] = []
+
+            for key in ("content", "data", "output", "tool_response"):
+                value = node.get(key)
+                if isinstance(value, (dict, list)):
+                    child_nodes.append(value)
+
             for value in node.values():
                 if isinstance(value, (dict, list)):
-                    _walk(value)
+                    child_nodes.append(value)
+
+            seen_ids: set[int] = set()
+            for child in child_nodes:
+                identifier = id(child)
+                if identifier in seen_ids:
+                    continue
+                seen_ids.add(identifier)
+                _walk(child, role=node_role)
+
         elif isinstance(node, list):
             for item in node:
-                _walk(item)
+                _walk(item, role=role)
 
     _walk(payload)
 
-    cleaned = [chunk.strip() for chunk in texts if isinstance(chunk, str) and chunk.strip()]
-    return "\n".join(cleaned)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for chunk in texts:
+        if chunk in seen:
+            continue
+        seen.add(chunk)
+        unique.append(chunk)
+
+    return "\n".join(unique)
 
 
 class BaseAIProvider:
