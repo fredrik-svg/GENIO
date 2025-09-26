@@ -275,13 +275,12 @@ class OpenAIProvider(BaseAIProvider):
 
         return await self._legacy_transcribe(wav_bytes, language)
 
-    async def chat_reply(
+    async def _legacy_chat_reply(
         self,
         user_text: str,
         *,
         context_sections: Optional[Sequence[str]] = None,
     ) -> str:
-        self._require_api_key()
         messages: List[Dict[str, str]] = [
             {
                 "role": "system",
@@ -311,6 +310,63 @@ class OpenAIProvider(BaseAIProvider):
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"].strip()
+
+    async def chat_reply(
+        self,
+        user_text: str,
+        *,
+        context_sections: Optional[Sequence[str]] = None,
+    ) -> str:
+        self._require_api_key()
+
+        def _make_content(role: str, text: str, *, is_user: bool = False) -> Dict[str, Any]:
+            entry_type = "input_text" if is_user else "text"
+            return {"role": role, "content": [{"type": entry_type, "text": text}]}
+
+        inputs: List[Dict[str, Any]] = [
+            _make_content(
+                "system",
+                "Du är en hjälpsam röstassistent som pratar naturlig svenska. Svara kort och tydligt.",
+            )
+        ]
+
+        if context_sections:
+            context_text = "\n\n".join(context_sections)
+            inputs.append(
+                _make_content(
+                    "system",
+                    "Använd följande bakgrundsinformation när du svarar, men hitta inte på fakta om inget passar:\n\n"
+                    + context_text,
+                )
+            )
+
+        inputs.append(_make_content("user", user_text, is_user=True))
+
+        payload = {
+            "model": self._chat_model,
+            "modalities": ["text"],
+            "input": inputs,
+        }
+
+        try:
+            response_payload = await self._post_responses(payload)
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
+            logger.error(
+                "OpenAI Voice API-chatt misslyckades (%s): %s",
+                exc.response.status_code if exc.response is not None else "okänt",
+                exc,
+            )
+            return await self._legacy_chat_reply(user_text, context_sections=context_sections)
+        except Exception as exc:  # pragma: no cover - nätverksfel
+            logger.error("Kunde inte kontakta OpenAI Voice API för chatt: %s", exc)
+            return await self._legacy_chat_reply(user_text, context_sections=context_sections)
+
+        reply_text = _extract_text_from_json_payload(response_payload).strip()
+        if reply_text:
+            return reply_text
+
+        logger.warning("Voice API-chatt saknade textsvar – återgår till klassisk chattmodell.")
+        return await self._legacy_chat_reply(user_text, context_sections=context_sections)
 
     async def synthesize(self, text: str) -> bytes:
         self._require_api_key()
