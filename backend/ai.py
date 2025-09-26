@@ -250,15 +250,10 @@ class OpenAIProvider(BaseAIProvider):
         voice_request = {
             "model": self._stt_model,
             "modalities": ["text"],
-            "input": [
+            "input_audio": [
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "audio": {"data": audio_payload, "format": "wav"},
-                        }
-                    ],
+                    "data": audio_payload,
+                    "format": "wav",
                 }
             ],
         }
