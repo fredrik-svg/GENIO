@@ -26,9 +26,10 @@ def _make_wav_bytes():
 
 
 class _DummyResponse:
-    def __init__(self, payload, *, headers):
+    def __init__(self, payload, *, headers, binary_content=None):
         self._payload = payload
         self.headers = headers
+        self._binary_content = binary_content
 
     def raise_for_status(self):
         return None
@@ -38,7 +39,13 @@ class _DummyResponse:
 
     @property
     def content(self):
+        if self._binary_content is not None:
+            return self._binary_content
         return json.dumps(self._payload).encode()
+
+    @property
+    def text(self):
+        return json.dumps(self._payload)
 
 
 class _ClientRecorder:
@@ -57,6 +64,102 @@ class _ClientRecorder:
         return self._response
 
 
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_uses_correct_tts_api(monkeypatch):
+    """Test that the synthesize method uses the correct OpenAI TTS API endpoint and format."""
+    wav_bytes = _make_wav_bytes()
+    response = _DummyResponse(payload={}, headers={"content-type": "audio/wav"}, binary_content=wav_bytes)
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="tts-1",
+        tts_voice="alloy",
+    )
+
+    audio_bytes = await provider.synthesize("hej")
+
+    assert audio_bytes == wav_bytes
+    assert recorder.post_calls, "HTTP POST should have been invoked"
+    
+    # Verify correct endpoint
+    assert recorder.post_calls[0]["url"].endswith("/audio/speech")
+    
+    # Verify correct payload format
+    request_json = recorder.post_calls[0]["json"]
+    assert request_json["model"] == "tts-1"
+    assert request_json["input"] == "hej"
+    assert request_json["voice"] == "alloy"
+    assert request_json["response_format"] == "wav"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_error_handling(monkeypatch):
+    """Test that synthesize properly handles HTTP errors."""
+    from httpx import HTTPStatusError, Request, Response
+    
+    class _ErrorResponse:
+        def __init__(self):
+            self.status_code = 400
+            self.text = "Bad Request: Invalid model"
+        
+        def raise_for_status(self):
+            request = Request("POST", "https://api.openai.com/v1/audio/speech")
+            response = Response(400, content=b"Bad Request: Invalid model")
+            raise HTTPStatusError("400 Bad Request", request=request, response=response)
+    
+    class _ErrorClient:
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        
+        async def post(self, url, **kwargs):
+            return _ErrorResponse()
+    
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: _ErrorClient())
+    
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="tts-1",
+        tts_voice="alloy",
+    )
+    
+    with pytest.raises(RuntimeError, match=r"OpenAI Voice API-TTS misslyckades \(400\)"):
+        await provider.synthesize("test")
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_synthesize_maps_legacy_model_names(monkeypatch):
+    """Test that legacy model names like gpt-4o-mini-tts are mapped to tts-1."""
+    wav_bytes = _make_wav_bytes()
+    response = _DummyResponse(payload={}, headers={"content-type": "audio/wav"}, binary_content=wav_bytes)
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        tts_model="gpt-4o-mini-tts",
+        tts_voice="alloy",
+    )
+
+    audio_bytes = await provider.synthesize("hej")
+
+    assert audio_bytes == wav_bytes
+    
+    # Verify that gpt-4o-mini-tts was mapped to tts-1
+    request_json = recorder.post_calls[0]["json"]
+    assert request_json["model"] == "tts-1"
+
+
+@pytest.mark.skip(reason="Legacy test for deprecated OpenAI Responses API format")
 @pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_decodes_json_wav(monkeypatch):
     wav_bytes = _make_wav_bytes()
@@ -91,6 +194,7 @@ async def test_openai_synthesize_decodes_json_wav(monkeypatch):
     ]
 
 
+@pytest.mark.skip(reason="Legacy test for deprecated OpenAI Responses API format")
 @pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_accepts_data_uri_audio(monkeypatch):
     wav_bytes = _make_wav_bytes()
@@ -114,6 +218,7 @@ async def test_openai_synthesize_accepts_data_uri_audio(monkeypatch):
     assert audio_bytes == wav_bytes
 
 
+@pytest.mark.skip(reason="Legacy test for deprecated OpenAI Responses API format")
 @pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_errors_on_missing_audio(monkeypatch):
     payload = {"data": "not-audio"}
@@ -133,6 +238,7 @@ async def test_openai_synthesize_errors_on_missing_audio(monkeypatch):
         await provider.synthesize("hej")
 
 
+@pytest.mark.skip(reason="Legacy test for deprecated OpenAI Responses API format")
 @pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_supports_responses_audio_structure(monkeypatch):
     wav_bytes = _make_wav_bytes()
@@ -171,6 +277,7 @@ async def test_openai_synthesize_supports_responses_audio_structure(monkeypatch)
     assert audio_bytes == wav_bytes
 
 
+@pytest.mark.skip(reason="Legacy test for deprecated OpenAI Responses API format")
 @pytest.mark.anyio("asyncio")
 async def test_openai_synthesize_joins_chunked_audio_payload(monkeypatch):
     wav_bytes = _make_wav_bytes()

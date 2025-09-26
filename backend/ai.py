@@ -428,32 +428,34 @@ class OpenAIProvider(BaseAIProvider):
         if not cleaned_text:
             raise ValueError("Kan inte generera tal från tom text.")
 
+        # Use the correct OpenAI TTS API format
+        tts_model = self._tts_model
+        # Map the model name to a valid OpenAI TTS model if needed
+        if tts_model.startswith("gpt-"):
+            tts_model = "tts-1"
+
         payload = {
-            "model": self._tts_model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": cleaned_text},
-                    ],
-                }
-            ],
-            "audio": {"voice": self._tts_voice, "format": "wav"},
+            "model": tts_model,
+            "input": cleaned_text,
+            "voice": self._tts_voice,
+            "response_format": "wav",
         }
 
         try:
-            response_payload = await self._post_responses(payload)
+            # Use the correct endpoint for OpenAI TTS
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.post(
+                    f"{self._base_url}/audio/speech",
+                    headers=self._headers(content_type="application/json"),
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.content
         except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
             status = exc.response.status_code if exc.response is not None else "okänt"
             body = exc.response.text if exc.response is not None else "<ingen text>"
             logger.error("OpenAI Voice API-TTS misslyckades (%s): %s – svar: %s", status, exc, body)
             raise RuntimeError(f"OpenAI Voice API-TTS misslyckades ({status}).") from exc
-
-        audio_bytes = _extract_wav_from_json_payload(response_payload)
-        if audio_bytes is None:
-            raise RuntimeError("OpenAI Voice API returnerade inget WAV-ljud.")
-
-        return audio_bytes
 
     async def create_embeddings(
         self, texts: Sequence[str], *, model: Optional[str] = None
