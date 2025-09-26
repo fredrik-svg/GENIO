@@ -458,11 +458,11 @@ def _detect_voice_activity(audio_chunk: np.ndarray, sample_rate: int) -> bool:
     return energy > ENERGY_THRESHOLD
 
 
-def record_until_silence() -> np.ndarray:
+def record_until_silence(max_seconds: float | None = None, silence_duration: float | None = None) -> np.ndarray:
     """Spelar in mono, 16kHz tills tystnad eller maxlängd."""
     q = queue.Queue()
-    duration_limit = MAX_RECORD_SECONDS
-    silence_hang = SILENCE_DURATION
+    duration_limit = max_seconds if max_seconds is not None else MAX_RECORD_SECONDS
+    silence_hang = silence_duration if silence_duration is not None else SILENCE_DURATION
     channels = 1
     blocksize = AUDIO_BLOCKSIZE
 

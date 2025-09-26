@@ -9,7 +9,10 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, Redirect
 from pydantic import BaseModel, Field, ConfigDict
 from fastapi.staticfiles import StaticFiles
 
-from .config import HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH, INPUT_DEVICE, OUTPUT_DEVICE
+from .config import (
+    HOST, PORT, SAMPLE_RATE, PLAY_CMD, OUTPUT_WAV_PATH, INPUT_DEVICE, OUTPUT_DEVICE,
+    WAKE_WORD_ENABLED, WAKE_WORDS
+)
 from .audio import (
     record_until_silence,
     save_wav_mono16,
@@ -39,6 +42,7 @@ from .audio_settings import (
     set_selected_input_device,
     set_selected_output_device,
 )
+from .wake_word import get_wake_word_detector
 
 logger = logging.getLogger(__name__)
 
@@ -457,6 +461,53 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
 async def converse():
     data = await full_converse_flow(trigger="touch")
     return JSONResponse(data)
+
+
+@app.post("/api/wake-word/start")
+async def start_wake_word():
+    """Start wake word detection."""
+    detector = get_wake_word_detector()
+    
+    async def on_wake_word():
+        """Callback when wake word is detected."""
+        await notify("status: Wake word detected!")
+        data = await full_converse_flow(trigger="wake-word")
+        # Optionally restart listening after conversation
+        if detector.is_listening:
+            asyncio.create_task(detector.start_listening(on_wake_word))
+    
+    try:
+        await detector.start_listening(on_wake_word)
+        await notify("status: Wake word detection started")
+        return JSONResponse({"ok": True, "message": "Wake word detection started"})
+    except Exception as e:
+        logger.error("Failed to start wake word detection: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/wake-word/stop")
+async def stop_wake_word():
+    """Stop wake word detection."""
+    detector = get_wake_word_detector()
+    try:
+        await detector.stop_listening()
+        await notify("status: Wake word detection stopped")
+        return JSONResponse({"ok": True, "message": "Wake word detection stopped"})
+    except Exception as e:
+        logger.error("Failed to stop wake word detection: %s", e)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/wake-word/status")
+async def wake_word_status():
+    """Get wake word detection status."""
+    detector = get_wake_word_detector()
+    
+    return JSONResponse({
+        "enabled": WAKE_WORD_ENABLED,
+        "wake_words": WAKE_WORDS,
+        "is_listening": detector.is_listening,
+    })
 
 
 class AskPayload(BaseModel):
