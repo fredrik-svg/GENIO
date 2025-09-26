@@ -77,8 +77,11 @@ async def test_openai_synthesize_decodes_json_wav(monkeypatch):
 
     assert audio_bytes == wav_bytes
     assert recorder.post_calls, "HTTP POST should have been invoked"
-    assert recorder.post_calls[0]["url"].endswith("/audio/speech")
-    assert recorder.post_calls[0]["json"]["input"] == "hej"
+    request_json = recorder.post_calls[0]["json"]
+    assert recorder.post_calls[0]["url"].endswith("/responses")
+    assert request_json["modalities"] == ["audio"]
+    assert request_json["audio"] == {"voice": "alloy", "format": "wav"}
+    assert request_json["input"][0]["content"][0]["text"] == "hej"
 
 
 @pytest.mark.anyio("asyncio")

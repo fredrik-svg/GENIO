@@ -120,6 +120,35 @@ def _extract_wav_from_json_response(response: httpx.Response) -> Optional[bytes]
     return _extract_wav_from_json_payload(payload)
 
 
+def _extract_text_from_json_payload(payload: Any) -> str:
+    """Collect text fragments from a JSON payload returned by the Voice API."""
+
+    texts: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            node_type = node.get("type")
+            if node_type == "output_text":
+                text_value = node.get("text")
+                if isinstance(text_value, str):
+                    texts.append(text_value)
+            elif node_type == "response.output_text":
+                text_value = node.get("text")
+                if isinstance(text_value, str):
+                    texts.append(text_value)
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(payload)
+
+    cleaned = [chunk.strip() for chunk in texts if isinstance(chunk, str) and chunk.strip()]
+    return "\n".join(cleaned)
+
+
 class BaseAIProvider:
     """Abstract base class for AI providers."""
 
@@ -162,7 +191,7 @@ class OpenAIProvider(BaseAIProvider):
         self._api_key = (api_key or OPENAI_API_KEY or "").strip()
         self._base_url = base_url.rstrip("/") or "https://api.openai.com/v1"
         self._chat_model = (chat_model or CHAT_MODEL or "gpt-4o-mini").strip()
-        self._stt_model = (stt_model or STT_MODEL or "whisper-1").strip()
+        self._stt_model = (stt_model or STT_MODEL or "gpt-4o-mini-transcribe").strip()
         self._tts_model = (tts_model or TTS_MODEL or "gpt-4o-mini-tts").strip()
         self._tts_voice = (tts_voice or TTS_VOICE or "alloy").strip()
         self._embedding_model = (
@@ -173,6 +202,7 @@ class OpenAIProvider(BaseAIProvider):
         if extra_headers:
             headers.update(extra_headers)
         self._base_headers = headers
+        self._responses_endpoint = f"{self._base_url}/responses"
 
     def _require_api_key(self) -> None:
         if not self._api_key:
@@ -184,11 +214,24 @@ class OpenAIProvider(BaseAIProvider):
             headers["Content-Type"] = content_type
         return headers
 
-    async def transcribe(self, wav_bytes: bytes, *, language: str = "sv") -> str:
-        self._require_api_key()
+    async def _post_responses(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                self._responses_endpoint,
+                headers=self._headers(content_type="application/json"),
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def _legacy_transcribe(self, wav_bytes: bytes, language: str) -> str:
+        model_name = self._stt_model or "whisper-1"
+        if not model_name.lower().startswith("whisper"):
+            model_name = "whisper-1"
+
         files = {
             "file": ("audio.wav", wav_bytes, "audio/wav"),
-            "model": (None, self._stt_model),
+            "model": (None, model_name),
             "language": (None, language),
             "response_format": (None, "text"),
         }
@@ -200,6 +243,42 @@ class OpenAIProvider(BaseAIProvider):
             )
             response.raise_for_status()
             return response.text.strip()
+
+    async def transcribe(self, wav_bytes: bytes, *, language: str = "sv") -> str:
+        self._require_api_key()
+        audio_payload = base64.b64encode(wav_bytes).decode("ascii") if wav_bytes else ""
+        voice_request = {
+            "model": self._stt_model,
+            "modalities": ["text"],
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "audio": {"data": audio_payload, "format": "wav"},
+                        }
+                    ],
+                }
+            ],
+        }
+        if language:
+            voice_request["instructions"] = f"Transkribera talet till {language.upper()} text."
+
+        try:
+            response_payload = await self._post_responses(voice_request)
+            transcript = _extract_text_from_json_payload(response_payload)
+            if transcript:
+                return transcript
+            logger.warning("Voice API saknade transkriberad text – återgår till klassisk STT.")
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
+            logger.error(
+                "OpenAI Voice API-transkription misslyckades (%s): %s", exc.response.status_code, exc
+            )
+        except Exception as exc:  # pragma: no cover - nätverksfel
+            logger.error("Kunde inte kontakta OpenAI Voice API för transkription: %s", exc)
+
+        return await self._legacy_transcribe(wav_bytes, language)
 
     async def chat_reply(
         self,
@@ -242,35 +321,32 @@ class OpenAIProvider(BaseAIProvider):
         self._require_api_key()
         payload = {
             "model": self._tts_model,
-            "voice": self._tts_voice,
-            "input": text,
-            "format": "wav",
+            "modalities": ["audio"],
+            "audio": {"voice": self._tts_voice, "format": "wav"},
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": text,
+                        }
+                    ],
+                }
+            ],
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
-                f"{self._base_url}/audio/speech",
-                headers=self._headers(content_type="application/json"),
-                json=payload,
-            )
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if "application/json" in content_type or "text/" in content_type:
-                audio_bytes = _extract_wav_from_json_response(response)
-                if audio_bytes is not None:
-                    return audio_bytes
-                raise RuntimeError("OpenAI TTS returned JSON without WAV audio data.")
 
-            content = response.content
-            if content.startswith(b"RIFF"):
-                return content
+        try:
+            response_payload = await self._post_responses(payload)
+        except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
+            status = exc.response.status_code if exc.response is not None else "okänt"
+            raise RuntimeError(f"OpenAI Voice API-TTS misslyckades ({status}).") from exc
 
-            # Some deployments might omit the JSON content-type header; try decoding
-            # the body as JSON before failing so that we never play garbage noise.
-            audio_bytes = _extract_wav_from_json_response(response)
-            if audio_bytes is not None:
-                return audio_bytes
+        audio_bytes = _extract_wav_from_json_payload(response_payload)
+        if audio_bytes is None:
+            raise RuntimeError("OpenAI Voice API returnerade inget WAV-ljud.")
 
-            raise RuntimeError("OpenAI TTS returned a non-WAV response.")
+        return audio_bytes
 
     async def create_embeddings(
         self, texts: Sequence[str], *, model: Optional[str] = None
