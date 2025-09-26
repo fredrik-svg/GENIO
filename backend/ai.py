@@ -316,19 +316,8 @@ class OpenAIProvider(BaseAIProvider):
         self._require_api_key()
         payload = {
             "model": self._tts_model,
-            "modalities": ["audio"],
+            "input": text,
             "audio": {"voice": self._tts_voice, "format": "wav"},
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": text,
-                        }
-                    ],
-                }
-            ],
         }
 
         try:
