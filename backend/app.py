@@ -1,5 +1,5 @@
 
-import io, os, subprocess, logging, shlex, socket, uuid
+import io, os, subprocess, logging, shlex, socket, uuid, asyncio
 from contextlib import suppress
 from ipaddress import ip_address
 from typing import Literal
@@ -391,14 +391,25 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
     reply = rag.answer
     await notify(f"assistent: {reply}")
 
+    # Optimering: Starta TTS och filoperationer parallellt
     await notify("status: Skapar tal ...")
-    wav_reply = await tts_speak_sv(reply)
-    wav_reply = ensure_wav_pcm16(wav_reply)
-
-    # Om en specifik ljudutgång valts ska sounddevice ta hand om uppspelningen
-    # eftersom externa kommandon (t.ex. aplay/paplay) alltid använder
-    # systemets standard. Då ignoreras användarens valda enhet.
-    prefer_sounddevice = get_selected_output_device() is not None
+    
+    # Kör TTS och förbered filhantering parallellt
+    async def generate_audio():
+        wav_reply = await tts_speak_sv(reply)
+        return ensure_wav_pcm16(wav_reply)
+    
+    async def setup_playback():
+        # Förbereder playback-konfiguration medan TTS körs
+        prefer_sounddevice = get_selected_output_device() is not None
+        play_cmd = (PLAY_CMD or "").strip()
+        return prefer_sounddevice, play_cmd
+    
+    # Kör båda operationerna parallellt
+    wav_reply, (prefer_sounddevice, play_cmd) = await asyncio.gather(
+        generate_audio(),
+        setup_playback()
+    )
 
     # Spara och spela upp
     out_path = OUTPUT_WAV_PATH
@@ -406,7 +417,6 @@ async def full_converse_flow(trigger: str = "touch") -> dict:
         f.write(wav_reply)
 
     played = False
-    play_cmd = (PLAY_CMD or "").strip()
     if play_cmd and not prefer_sounddevice:
         try:
             subprocess.run(shlex.split(play_cmd) + [out_path], check=True)

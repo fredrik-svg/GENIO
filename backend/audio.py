@@ -11,6 +11,11 @@ import wave
 from typing import BinaryIO, Literal, cast
 
 import numpy as np
+try:
+    import webrtcvad
+    _WEBRTC_VAD_AVAILABLE = True
+except ImportError:
+    _WEBRTC_VAD_AVAILABLE = False
 if not getattr(wave.open, "__genio_pathlike__", False):  # pragma: no cover - exercised in tests
     _original_wave_open = wave.open
 
@@ -51,11 +56,13 @@ def _sounddevice_available() -> bool:
 
 from .audio_settings import get_selected_input_device, get_selected_output_device
 from .config import (
+    AUDIO_BLOCKSIZE,
     ENERGY_THRESHOLD,
     FALLBACK_SAMPLE_RATES,
     MAX_RECORD_SECONDS,
     SAMPLE_RATE,
     SILENCE_DURATION,
+    USE_WEBRTC_VAD,
 )
 
 
@@ -427,13 +434,37 @@ def rms_energy(audio: np.ndarray) -> float:
     """Returnera RMS-energi (0..1 ungefär)."""
     return float(np.sqrt(np.mean(np.square(audio))))
 
+def _detect_voice_activity(audio_chunk: np.ndarray, sample_rate: int) -> bool:
+    """Detect voice activity using WebRTC VAD if available, fallback to energy detection."""
+    if USE_WEBRTC_VAD and _WEBRTC_VAD_AVAILABLE and sample_rate in [8000, 16000, 32000, 48000]:
+        try:
+            # WebRTC VAD requires int16 PCM data
+            vad = webrtcvad.Vad(2)  # Aggressiveness 2 (moderate)
+            audio_int16 = (audio_chunk * 32767).astype(np.int16)
+            
+            # WebRTC VAD needs frames of specific lengths (10, 20, or 30ms)
+            frame_duration_ms = 30
+            frame_length = int(sample_rate * frame_duration_ms / 1000)
+            
+            if len(audio_int16) >= frame_length:
+                frame = audio_int16[:frame_length]
+                return vad.is_speech(frame.tobytes(), sample_rate)
+        except Exception:
+            # Fall back to energy detection if WebRTC VAD fails
+            pass
+    
+    # Fallback to energy-based detection
+    energy = rms_energy(audio_chunk)
+    return energy > ENERGY_THRESHOLD
+
+
 def record_until_silence() -> np.ndarray:
     """Spelar in mono, 16kHz tills tystnad eller maxlängd."""
     q = queue.Queue()
     duration_limit = MAX_RECORD_SECONDS
     silence_hang = SILENCE_DURATION
     channels = 1
-    blocksize = 1024
+    blocksize = AUDIO_BLOCKSIZE
 
     def callback(indata, frames, time_info, status):
         if status:
@@ -510,20 +541,20 @@ def record_until_silence() -> np.ndarray:
         last_voice_time = start
         while True:
             try:
-                data = q.get(timeout=0.5)
+                data = q.get(timeout=0.1)
             except queue.Empty:
                 data = None
             if data is not None:
                 audio_chunks.append(data[:,0])  # mono
-                energy = rms_energy(data[:,0])
-                if energy > ENERGY_THRESHOLD:
+                # Use optimized voice activity detection
+                if _detect_voice_activity(data[:,0], effective_sample_rate):
                     last_voice_time = time.time()
 
             now = time.time()
             if (now - start) > duration_limit:
                 break
-            if (now - last_voice_time) > silence_hang and (now - start) > 1.0:
-                # minst 1s inspelat + tystnad
+            if (now - last_voice_time) > silence_hang and (now - start) > 0.5:
+                # minst 0.5s inspelat + tystnad
                 break
 
     if not audio_chunks:

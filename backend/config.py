@@ -63,8 +63,12 @@ SAMPLE_RATE = int(env("SAMPLE_RATE", "16000"))
 FALLBACK_SAMPLE_RATES = _parse_fallback_sample_rates(env("FALLBACK_SAMPLE_RATES"))
 MAX_RECORD_SECONDS = float(env("MAX_RECORD_SECONDS", "12"))
 # Tillåt längre tystnad efter aktiverad mikrofon innan inspelningen avslutas.
-SILENCE_DURATION = float(env("SILENCE_DURATION", "2.5"))
+SILENCE_DURATION = float(env("SILENCE_DURATION", "1.0"))
 ENERGY_THRESHOLD = float(env("ENERGY_THRESHOLD", "0.015"))  # justera vid behov
+# Audio blocksize för lägre latens (mindre värde = lägre latens men mer CPU)
+AUDIO_BLOCKSIZE = int(env("AUDIO_BLOCKSIZE", "512"))
+# Använd WebRTC VAD för bättre röstaktivitetsdetektering
+USE_WEBRTC_VAD = env_bool("USE_WEBRTC_VAD", "1")
 
 CHAT_MODEL = env("CHAT_MODEL", "gpt-4o-mini")
 TTS_MODEL = env("TTS_MODEL", "gpt-4o-mini-tts")
@@ -80,8 +84,8 @@ RAG_DB_PATH = env(
     "RAG_DB_PATH",
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "rag_store")),
 )
-RAG_TOP_K = int(env("RAG_TOP_K", "4"))
-RAG_MIN_SCORE = float(env("RAG_MIN_SCORE", "0.35"))
+RAG_TOP_K = int(env("RAG_TOP_K", "3"))
+RAG_MIN_SCORE = float(env("RAG_MIN_SCORE", "0.4"))
 RAG_CHUNK_SIZE = int(env("RAG_CHUNK_SIZE", "400"))
 RAG_CHUNK_OVERLAP = int(env("RAG_CHUNK_OVERLAP", "80"))
 
