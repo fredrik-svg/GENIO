@@ -519,3 +519,42 @@ def test_extract_text_skips_user_text():
     text = ai._extract_text_from_json_payload(payload)
 
     assert text == "Hej!\nHur kan jag hjälpa dig?"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_chat_reply_all_inputs_use_input_text_type(monkeypatch):
+    """Test that all input messages (system and user) use 'input_text' type as required by OpenAI API."""
+    payload = {
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Test response"},
+                ],
+            }
+        ]
+    }
+    response = _DummyResponse(payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        chat_model="model",
+    )
+
+    await provider.chat_reply(
+        "Test question?",
+        context_sections=["Test context information."],
+    )
+
+    # Verify the request was made
+    assert recorder.post_calls, "Responses endpoint should have been invoked"
+    request_json = recorder.post_calls[0]["json"]
+    
+    # Check that all input messages use "input_text" type
+    for input_msg in request_json["input"]:
+        for content_item in input_msg["content"]:
+            assert content_item["type"] == "input_text", f"Expected 'input_text' but got '{content_item['type']}' for {input_msg['role']} message"
