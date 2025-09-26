@@ -203,3 +203,77 @@ async def test_openai_synthesize_joins_chunked_audio_payload(monkeypatch):
     audio_bytes = await provider.synthesize("hej")
 
     assert audio_bytes == wav_bytes
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_chat_reply_uses_responses_api(monkeypatch):
+    payload = {
+        "output": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Hej!"},
+                    {"type": "output_text", "text": "Hur kan jag hjälpa dig?"},
+                ],
+            }
+        ]
+    }
+    response = _DummyResponse(payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        chat_model="model",
+    )
+
+    reply = await provider.chat_reply(
+        "Hur är vädret?",
+        context_sections=["Det regnar i Göteborg."],
+    )
+
+    assert reply == "Hej!\nHur kan jag hjälpa dig?"
+    assert recorder.post_calls, "Responses endpoint should have been invoked"
+    request_json = recorder.post_calls[0]["json"]
+    assert recorder.post_calls[0]["url"].endswith("/responses")
+    assert request_json["model"] == "model"
+    assert request_json["modalities"] == ["text"]
+    assert request_json["input"][-1]["role"] == "user"
+    assert request_json["input"][-1]["content"][0]["type"] == "input_text"
+    # Context should be present in a system message
+    assert any("Göteborg" in chunk["content"][0]["text"] for chunk in request_json["input"])
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_chat_reply_falls_back_to_legacy(monkeypatch):
+    call_args: dict[str, dict] = {}
+
+    async def fake_post_responses(self, payload):
+        call_args["payload"] = payload
+        return {}
+
+    monkeypatch.setattr(ai.OpenAIProvider, "_post_responses", fake_post_responses)
+
+    fallback_payload = {
+        "choices": [{"message": {"content": "Fallback-svar"}}]
+    }
+    response = _DummyResponse(fallback_payload, headers={"content-type": "application/json"})
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        chat_model="model",
+    )
+
+    reply = await provider.chat_reply("Hej")
+
+    assert reply == "Fallback-svar"
+    assert "payload" in call_args
+    assert call_args["payload"]["modalities"] == ["text"]
+    assert recorder.post_calls, "Fallback chat completions should have been invoked"
+    assert recorder.post_calls[0]["url"].endswith("/chat/completions")
