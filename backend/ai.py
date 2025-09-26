@@ -287,44 +287,8 @@ class OpenAIProvider(BaseAIProvider):
 
     async def transcribe(self, wav_bytes: bytes, *, language: str = "sv") -> str:
         self._require_api_key()
-        audio_payload = base64.b64encode(wav_bytes).decode("ascii") if wav_bytes else ""
-        voice_request = {
-            "model": self._stt_model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "audio": [
-                                {
-                                    "data": audio_payload,
-                                    "format": "wav",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-        if language:
-            voice_request["instructions"] = f"Transkribera talet till {language.upper()} text."
-
-        try:
-            response_payload = await self._post_responses(voice_request)
-            transcript = _extract_text_from_json_payload(response_payload)
-            if transcript:
-                return transcript
-            logger.warning("Voice API saknade transkriberad text – återgår till klassisk STT.")
-        except httpx.HTTPStatusError as exc:  # pragma: no cover - nätverksfel
-            status = exc.response.status_code if exc.response is not None else "okänt"
-            body = exc.response.text if exc.response is not None else "<ingen text>"
-            logger.error(
-                "OpenAI Voice API-transkription misslyckades (%s): %s – svar: %s", status, exc, body
-            )
-        except Exception as exc:  # pragma: no cover - nätverksfel
-            logger.error("Kunde inte kontakta OpenAI Voice API för transkription: %s", exc)
-
+        # Use the standard OpenAI audio transcriptions API directly
+        # since the responses API doesn't support input_audio content type
         return await self._legacy_transcribe(wav_bytes, language)
 
     async def _legacy_chat_reply(

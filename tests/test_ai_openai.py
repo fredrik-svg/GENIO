@@ -26,10 +26,11 @@ def _make_wav_bytes():
 
 
 class _DummyResponse:
-    def __init__(self, payload, *, headers, binary_content=None):
+    def __init__(self, payload, *, headers, binary_content=None, text_content=None):
         self._payload = payload
         self.headers = headers
         self._binary_content = binary_content
+        self._text_content = text_content
 
     def raise_for_status(self):
         return None
@@ -45,6 +46,8 @@ class _DummyResponse:
 
     @property
     def text(self):
+        if self._text_content is not None:
+            return self._text_content
         return json.dumps(self._payload)
 
 
@@ -59,8 +62,8 @@ class _ClientRecorder:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def post(self, url, *, headers=None, json=None):
-        self.post_calls.append({"url": url, "headers": headers, "json": json})
+    async def post(self, url, *, headers=None, json=None, files=None):
+        self.post_calls.append({"url": url, "headers": headers, "json": json, "files": files})
         return self._response
 
 
@@ -419,6 +422,75 @@ def test_extract_text_handles_multiple_shapes():
     text = ai._extract_text_from_json_payload(payload)
 
     assert text == "Hej\nHur mår du?\nAllt är bra!"
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_transcribe_uses_correct_api(monkeypatch):
+    """Test that the transcribe method uses the correct OpenAI transcriptions API endpoint."""
+    response = _DummyResponse(
+        payload={}, 
+        headers={"content-type": "text/plain"}, 
+        text_content="Hej, det här är ett test."
+    )
+    recorder = _ClientRecorder(response)
+
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: recorder)
+
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        stt_model="whisper-1",
+    )
+
+    wav_bytes = _make_wav_bytes()
+    transcript = await provider.transcribe(wav_bytes, language="sv")
+
+    assert transcript == "Hej, det här är ett test."
+    assert recorder.post_calls, "HTTP POST should have been invoked"
+    
+    # Verify correct endpoint (should use audio/transcriptions, not responses)
+    assert recorder.post_calls[0]["url"].endswith("/audio/transcriptions")
+    
+    # Should not use the responses endpoint
+    assert not any(call["url"].endswith("/responses") for call in recorder.post_calls)
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_transcribe_handles_errors(monkeypatch):
+    """Test that transcribe properly handles HTTP errors."""
+    from httpx import HTTPStatusError, Request, Response
+    
+    class _ErrorResponse:
+        def __init__(self):
+            self.status_code = 400
+            self.text = "Bad Request: Invalid model"
+        
+        def raise_for_status(self):
+            request = Request("POST", "https://api.openai.com/v1/audio/transcriptions")
+            response = Response(400, content=b"Bad Request: Invalid model")
+            raise HTTPStatusError("400 Bad Request", request=request, response=response)
+    
+    class _ErrorClient:
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        
+        async def post(self, url, **kwargs):
+            return _ErrorResponse()
+    
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: _ErrorClient())
+    
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        stt_model="whisper-1",
+    )
+    
+    wav_bytes = _make_wav_bytes()
+    with pytest.raises(HTTPStatusError):
+        await provider.transcribe(wav_bytes, language="sv")
 
 
 def test_extract_text_skips_user_text():
