@@ -321,12 +321,7 @@ class OpenAIProvider(BaseAIProvider):
             "input": [
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": text,
-                        }
-                    ],
+                    "content": [{"type": "input_text", "text": text}],
                 }
             ],
         }
