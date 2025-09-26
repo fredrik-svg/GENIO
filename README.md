@@ -249,6 +249,34 @@ uvicorn backend.app:app --host 0.0.0.0 --port 8080
 
 ## Docker (lokalt på Pi eller via GHCR)
 
+### Installera Docker på Raspberry Pi OS
+
+På en ny installation av **Raspberry Pi OS Bookworm 64-bit** installeras Docker enklast via det officiella
+installationsscriptet:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+```
+
+Efter installationen, lägg till din användare (t.ex. `pi`) i `docker`-gruppen för att slippa köra allt som `sudo` och
+aktivera tjänsten:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+sudo systemctl enable docker
+sudo systemctl start docker
+```
+
+Kontrollera att allt fungerar:
+
+```bash
+docker run --rm hello-world
+```
+
+Om kommandot inte hittar `hello-world` första gången laddas bilden automatiskt ned.
+
 ### Bygg lokalt på Pi 5 (arm64)
 ```bash
 docker build -t pi5-assistant:local .
