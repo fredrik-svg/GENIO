@@ -142,8 +142,8 @@ Se `.env.sample`:
 - `EMBEDDING_MODEL=text-embedding-3-small`
 - `RAG_ENABLED=1`
 - `RAG_DB_PATH=./rag_store`
-- `RAG_TOP_K=4`
-- `RAG_MIN_SCORE=0.35`
+- `RAG_TOP_K=3`
+- `RAG_MIN_SCORE=0.4`
 - `RAG_CHUNK_SIZE=400`
 - `RAG_CHUNK_OVERLAP=80`
 - `AI_PROVIDER=openai` (alias eller modulväg, t.ex. `backend.ai:EchoProvider`)
@@ -157,6 +157,22 @@ Se `.env.sample`:
 - Skicka extra inställningar som JSON via `AI_PROVIDER_CONFIG`, exempelvis `{"base_url": "https://...", "api_key": "..."}`.
 
 Alla endpoints (`/api/converse`, RAG och TTS) använder samma provider, så ett byte slår igenom i hela backend.
+
+### Prestandaoptimering
+
+För att minska responstiden från mikrofon-aktivering till svar kan följande parametrar justeras:
+
+**Ljudinspelning:**
+- `SILENCE_DURATION=1.0` – Tid att vänta på tystnad innan inspelning avslutas (standard: 1.0s)
+- `AUDIO_BLOCKSIZE=512` – Mindre blockstorlek ger lägre latens men mer CPU-användning
+- `USE_WEBRTC_VAD=1` – Använd WebRTC Voice Activity Detection för bättre röstigenkänning
+- `ENERGY_THRESHOLD=0.015` – Känslighetsnivå för ljuddetektering
+
+**RAG-sökning:**
+- `RAG_TOP_K=3` – Färre sökresultat = snabbare bearbetning (standard: 3)  
+- `RAG_MIN_SCORE=0.4` – Högre tröskel = färre men mer relevanta träffar
+
+Systemet använder också parallell bearbetning där TTS-generering körs samtidigt som andra operationer för maximal prestanda.
 
 ## Kända tips
 
