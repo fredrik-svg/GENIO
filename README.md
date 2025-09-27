@@ -149,6 +149,22 @@ Se `.env.sample`:
 - `AI_PROVIDER=openai` (alias eller modulväg, t.ex. `backend.ai:EchoProvider`)
 - `AI_PROVIDER_CONFIG={}` (JSON-objekt med extra inställningar till vald provider)
 
+### Wake word-funktionalitet
+
+Systemet stöder kontinuerlig wake word-detektering:
+
+- `WAKE_WORD_ENABLED=0` – Aktivera/avaktivera wake word-detektering
+- `WAKE_WORDS=hej genio,genio,hej assistant` – Kommaseparerad lista över wake words (svenska)
+- `WAKE_WORD_TIMEOUT=5.0` – Sekunder att lyssna för wake word-detektering
+- `WAKE_WORD_COOLDOWN=1.0` – Paus mellan wake word-detekteringar
+
+API-endpoints för wake word:
+- `POST /api/wake-word/start` – Starta wake word-lyssning
+- `POST /api/wake-word/stop` – Stoppa wake word-lyssning  
+- `GET /api/wake-word/status` – Kontrollera wake word-status
+
+När wake word detekteras startas automatiskt en konversation.
+
 ### Byt AI-leverantör
 
 `backend/ai.py` hanterar alla samtal mot språk-/talmodeller. Standardaliaset är `openai`, men du kan:

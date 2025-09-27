@@ -96,3 +96,10 @@ OUTPUT_WAV_PATH = env("OUTPUT_WAV_PATH", "/tmp/reply.wav")
 
 AI_PROVIDER = (env("AI_PROVIDER", "openai") or "openai").strip()
 AI_PROVIDER_CONFIG = env_json("AI_PROVIDER_CONFIG", "")
+
+# Wake word configuration
+WAKE_WORD_ENABLED = env_bool("WAKE_WORD_ENABLED", "0")
+WAKE_WORDS = [word.strip().lower() for word in
+              (env("WAKE_WORDS", "hej genio,genio,hej assistant") or "").split(",") if word.strip()]
+WAKE_WORD_TIMEOUT = float(env("WAKE_WORD_TIMEOUT", "5.0"))  # seconds to listen for wake word
+WAKE_WORD_COOLDOWN = float(env("WAKE_WORD_COOLDOWN", "1.0"))  # cooldown between wake word detections
