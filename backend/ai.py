@@ -16,6 +16,7 @@ from .config import (
     EMBEDDING_MODEL,
     OPENAI_API_KEY,
     STT_MODEL,
+    STT_TIMEOUT,
     TTS_MODEL,
     TTS_VOICE,
 )
@@ -227,6 +228,7 @@ class OpenAIProvider(BaseAIProvider):
         tts_voice: Optional[str] = None,
         embedding_model: Optional[str] = None,
         request_timeout: float = 60.0,
+        stt_timeout: Optional[float] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         self._api_key = (api_key or OPENAI_API_KEY or "").strip()
@@ -239,6 +241,7 @@ class OpenAIProvider(BaseAIProvider):
             embedding_model or EMBEDDING_MODEL or "text-embedding-3-small"
         ).strip()
         self._timeout = request_timeout
+        self._stt_timeout = stt_timeout or STT_TIMEOUT
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
         if extra_headers:
             headers.update(extra_headers)
@@ -276,14 +279,36 @@ class OpenAIProvider(BaseAIProvider):
             "language": (None, language),
             "response_format": (None, "text"),
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
-                f"{self._base_url}/audio/transcriptions",
-                headers=self._headers(),
-                files=files,
+        try:
+            async with httpx.AsyncClient(timeout=self._stt_timeout) as client:
+                response = await client.post(
+                    f"{self._base_url}/audio/transcriptions",
+                    headers=self._headers(),
+                    files=files,
+                )
+                response.raise_for_status()
+                return response.text.strip()
+        except httpx.ReadTimeout as exc:
+            logger.error(
+                "OpenAI transcription timed out after %s seconds - audio may be too long or API is slow",
+                self._stt_timeout
             )
-            response.raise_for_status()
-            return response.text.strip()
+            raise RuntimeError(
+                f"Ljudtranskribering tog för lång tid (>{self._stt_timeout}s). "
+                "Prova med kortare ljudklipp eller försök igen senare."
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else "okänt"
+            body = exc.response.text if exc.response is not None else "<ingen text>"
+            logger.error(
+                "OpenAI transcription API failed (%s): %s – response: %s",
+                status,
+                exc,
+                body,
+            )
+            raise RuntimeError(
+                f"Ljudtranskribering misslyckades (HTTP {status}). Försök igen senare."
+            ) from exc
 
     async def transcribe(self, wav_bytes: bytes, *, language: str = "sv") -> str:
         self._require_api_key()

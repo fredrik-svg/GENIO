@@ -134,6 +134,7 @@ Se `.env.sample`:
 - `TTS_MODEL=gpt-4o-mini-tts`
 - `TTS_VOICE=alloy`  (alternativ: "verse", "aria" m.fl. beroende på tillgänglighet)
 - `STT_MODEL=gpt-4o-mini-transcribe`
+- `STT_TIMEOUT=180` – Timeout för ljudtranskribering (sekunder, standard: 180)
 - `SAMPLE_RATE=16000`
 - `FALLBACK_SAMPLE_RATES=48000,44100,32000,24000,22050,16000,11025,8000`
 - `MAX_RECORD_SECONDS=12`
