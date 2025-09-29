@@ -74,6 +74,7 @@ CHAT_MODEL = env("CHAT_MODEL", "gpt-4o-mini")
 TTS_MODEL = env("TTS_MODEL", "gpt-4o-mini-tts")
 TTS_VOICE = env("TTS_VOICE", "alloy")
 STT_MODEL = env("STT_MODEL", "gpt-4o-mini-transcribe")
+STT_TIMEOUT = float(env("STT_TIMEOUT", "180"))  # Longer timeout for audio transcription
 OPENAI_API_KEY = env("OPENAI_API_KEY", "")
 HOST = env("HOST", "0.0.0.0")
 PORT = int(env("PORT", "8080"))

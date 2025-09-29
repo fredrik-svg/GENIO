@@ -489,7 +489,37 @@ async def test_openai_transcribe_handles_errors(monkeypatch):
     )
     
     wav_bytes = _make_wav_bytes()
-    with pytest.raises(HTTPStatusError):
+    with pytest.raises(RuntimeError, match="Ljudtranskribering misslyckades"):
+        await provider.transcribe(wav_bytes, language="sv")
+
+
+@pytest.mark.anyio("asyncio")
+async def test_openai_transcribe_handles_timeout(monkeypatch):
+    """Test that transcribe properly handles timeout errors with custom timeout."""
+    import asyncio
+    from httpx import ReadTimeout
+    
+    class _TimeoutClient:
+        async def __aenter__(self):
+            return self
+        
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        
+        async def post(self, url, **kwargs):
+            raise ReadTimeout("Request timed out")
+    
+    monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *args, **kwargs: _TimeoutClient())
+    
+    provider = ai.OpenAIProvider(
+        api_key="key",
+        base_url="https://api.example.com",
+        stt_model="whisper-1",
+        stt_timeout=5.0,  # Short timeout for testing
+    )
+    
+    wav_bytes = _make_wav_bytes()
+    with pytest.raises(RuntimeError, match="Ljudtranskribering tog för lång tid"):
         await provider.transcribe(wav_bytes, language="sv")
 
 
