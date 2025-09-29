@@ -48,6 +48,31 @@
       font-weight: 600;
       backdrop-filter: blur(6px);
       z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .wake-word-indicator {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      transition: all 0.3s ease;
+    }
+    .wake-word-indicator.inactive {
+      background-color: #dc3545;
+      box-shadow: 0 0 8px rgba(220, 53, 69, 0.4);
+    }
+    .wake-word-indicator.active {
+      background-color: #28a745;
+      box-shadow: 0 0 8px rgba(40, 167, 69, 0.6);
+      animation: wake-word-pulse 2s infinite;
+    }
+    @keyframes wake-word-pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.2); opacity: 0.8; }
     }
     .wrap {
       position: relative;
@@ -155,7 +180,10 @@
   </style>
 </head>
 <body>
-  <div class="brand" id="assistant-brand">Pi5 Röstassistent</div>
+  <div class="brand" id="assistant-brand">
+    <span class="wake-word-indicator inactive" id="wake-word-indicator" title="Wake word status"></span>
+    <span>Pi5 Röstassistent</span>
+  </div>
   <div class="wrap">
     <h1 id="assistant-title">Pi5 Röstassistent</h1>
     <div class="actions">
@@ -186,6 +214,7 @@
     const askSubmit = document.getElementById('ask-submit');
     const assistantBrand = document.getElementById('assistant-brand');
     const assistantTitle = document.getElementById('assistant-title');
+    const wakeWordIndicator = document.getElementById('wake-word-indicator');
     const root = document.documentElement;
 
     const defaultSettings = {
@@ -213,7 +242,13 @@
     function applyUiSettings(settings){
       const merged = { ...defaultSettings, ...settings };
       assistantName = merged.assistantName || defaultSettings.assistantName;
-      assistantBrand.textContent = assistantName;
+      
+      // Update brand text (the span inside the brand element)
+      const brandTextSpan = assistantBrand.querySelector('span:not(.wake-word-indicator)');
+      if (brandTextSpan) {
+        brandTextSpan.textContent = assistantName;
+      }
+      
       assistantTitle.textContent = assistantName;
       root.style.setProperty('--font-family', merged.fontFamily || defaultSettings.fontFamily);
       root.style.setProperty('--primary-button-bg', merged.primaryButtonColor || defaultSettings.primaryButtonColor);
@@ -372,6 +407,37 @@
         statusEl.textContent = msg;
       }
     };
+
+    // Wake word status checking functionality
+    function updateWakeWordIndicator(isActive, isListening) {
+      if (!wakeWordIndicator) return;
+      
+      if (isActive && isListening) {
+        wakeWordIndicator.className = 'wake-word-indicator active';
+        wakeWordIndicator.title = 'Wake word aktiv - lyssnar';
+      } else if (isActive) {
+        wakeWordIndicator.className = 'wake-word-indicator inactive';
+        wakeWordIndicator.title = 'Wake word aktiverad men lyssnar inte';
+      } else {
+        wakeWordIndicator.className = 'wake-word-indicator inactive';
+        wakeWordIndicator.title = 'Wake word avaktiverad';
+      }
+    }
+
+    async function checkWakeWordStatus() {
+      try {
+        const res = await fetch('/api/wake-word/status');
+        const status = await res.json();
+        updateWakeWordIndicator(status.enabled, status.is_listening);
+      } catch (err) {
+        console.error('Failed to check wake word status:', err);
+        updateWakeWordIndicator(false, false);
+      }
+    }
+
+    // Check wake word status periodically
+    checkWakeWordStatus();
+    setInterval(checkWakeWordStatus, 5000); // Check every 5 seconds
 
     loadUiSettings();
   </script>

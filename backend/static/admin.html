@@ -260,6 +260,21 @@
       font-size: 14px;
       opacity: 0.8;
     }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .checkbox-label input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+    .checkbox-text {
+      user-select: none;
+    }
     @media (max-width: 720px) {
       .wrap { padding: 24px 16px 40px; }
       header { justify-content: center; }
@@ -474,6 +489,43 @@
       </form>
     </div>
 
+    <div class="card" id="wake-word-card">
+      <div>
+        <h2>Wake Word-inställningar</h2>
+        <p class="helper">Konfigurera röstaktivering för handsfree-användning.</p>
+      </div>
+      <form id="wake-word-form">
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="wake-word-enabled" name="wake-word-enabled" />
+            <span class="checkbox-text">Aktivera wake word-detektering</span>
+          </label>
+          <small>När aktiverat lyssnar systemet kontinuerligt efter konfigurerade wake words.</small>
+        </div>
+        <div class="field" id="wake-words-field">
+          <label for="wake-words-input">Wake words (kommaseparerade)</label>
+          <input id="wake-words-input" name="wake-words" type="text" placeholder="hej genio, genio, hej assistant" />
+          <small>Ange de ord eller fraser som ska aktivera assistenten, separerade med komman.</small>
+        </div>
+        <div class="grid">
+          <div class="field">
+            <label for="wake-word-timeout">Timeout (sekunder)</label>
+            <input id="wake-word-timeout" name="wake-word-timeout" type="number" min="1" max="10" step="0.1" value="5.0" />
+            <small>Hur länge systemet lyssnar per detekteringsförsök.</small>
+          </div>
+          <div class="field">
+            <label for="wake-word-cooldown">Cooldown (sekunder)</label>
+            <input id="wake-word-cooldown" name="wake-word-cooldown" type="number" min="0.1" max="5" step="0.1" value="1.0" />
+            <small>Paus mellan wake word-detekteringar.</small>
+          </div>
+        </div>
+        <div class="grid">
+          <button class="btn" type="submit" id="wake-word-save">Spara wake word-inställningar</button>
+        </div>
+      </form>
+      <div class="status" id="wake-word-status"></div>
+    </div>
+
     <div class="card">
       <div>
         <h2>Hantera kunskapsbas (RAG)</h2>
@@ -572,6 +624,12 @@
       }
     };
     const audioRefreshBtn = document.getElementById('audio-refresh');
+    const wakeWordForm = document.getElementById('wake-word-form');
+    const wakeWordEnabled = document.getElementById('wake-word-enabled');
+    const wakeWordsInput = document.getElementById('wake-words-input');
+    const wakeWordTimeout = document.getElementById('wake-word-timeout');
+    const wakeWordCooldown = document.getElementById('wake-word-cooldown');
+    const wakeWordStatus = document.getElementById('wake-word-status');
     const backgroundUploadDefaultText = backgroundUploadFeedback ? backgroundUploadFeedback.textContent : '';
     let lanStatusDefault = lanStatus ? lanStatus.textContent : '';
     const clipboardAvailable = !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
@@ -1704,9 +1762,76 @@
       }
     });
 
+    // Wake word settings functionality
+    async function loadWakeWordSettings() {
+      if (!wakeWordForm) return;
+      
+      try {
+        const res = await fetch('/api/wake-word/settings');
+        const settings = await res.json();
+        
+        if (wakeWordEnabled) wakeWordEnabled.checked = settings.enabled || false;
+        if (wakeWordsInput) wakeWordsInput.value = (settings.wakeWords || []).join(', ');
+        if (wakeWordTimeout) wakeWordTimeout.value = settings.timeout || 5.0;
+        if (wakeWordCooldown) wakeWordCooldown.value = settings.cooldown || 1.0;
+        
+        if (wakeWordStatus) {
+          wakeWordStatus.textContent = settings.enabled ? 
+            'Wake word-detektering är aktiverad.' : 
+            'Wake word-detektering är avaktiverad.';
+        }
+      } catch (err) {
+        console.error('Failed to load wake word settings:', err);
+        if (wakeWordStatus) {
+          wakeWordStatus.textContent = 'Kunde inte ladda wake word-inställningar.';
+        }
+      }
+    }
+
+    if (wakeWordForm) {
+      wakeWordForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        
+        if (!wakeWordStatus) return;
+        
+        const wakeWordsText = wakeWordsInput ? wakeWordsInput.value.trim() : '';
+        const wakeWords = wakeWordsText ? wakeWordsText.split(',').map(w => w.trim()).filter(w => w) : [];
+        
+        const payload = {
+          enabled: wakeWordEnabled ? wakeWordEnabled.checked : false,
+          wakeWords: wakeWords,
+          timeout: wakeWordTimeout ? parseFloat(wakeWordTimeout.value) : 5.0,
+          cooldown: wakeWordCooldown ? parseFloat(wakeWordCooldown.value) : 1.0
+        };
+
+        wakeWordStatus.textContent = 'Sparar wake word-inställningar ...';
+        
+        try {
+          const res = await fetch('/api/wake-word/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          
+          if (res.ok && data.ok) {
+            wakeWordStatus.textContent = payload.enabled ? 
+              'Wake word-inställningar sparade och aktiverade.' : 
+              'Wake word-inställningar sparade och avaktiverade.';
+          } else {
+            wakeWordStatus.textContent = data.error || 'Kunde inte spara wake word-inställningar.';
+          }
+        } catch (err) {
+          wakeWordStatus.textContent = 'Ett fel inträffade vid sparande.';
+          console.error('Wake word settings error:', err);
+        }
+      });
+    }
+
     refreshDisplayTargets();
     loadDisplayConfiguration();
     loadAudioDevices();
+    loadWakeWordSettings();
     loadLanLinks();
     loadSettings();
   </script>
