@@ -28,6 +28,28 @@ class WakeWordDetector:
         self._listen_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
         self._current_settings = None
+        self.last_error: Optional[str] = None
+        self.last_error_time: Optional[float] = None
+
+    def _set_error(self, error_msg: str) -> None:
+        """Set the last error message and timestamp."""
+        self.last_error = error_msg
+        self.last_error_time = time.time()
+        logger.error("Wake word error: %s", error_msg)
+
+    def _clear_error(self) -> None:
+        """Clear any previous error state."""
+        self.last_error = None
+        self.last_error_time = None
+
+    def get_status(self) -> dict:
+        """Get comprehensive status including error information."""
+        return {
+            "is_listening": self.is_listening,
+            "last_detection_time": self.last_detection_time,
+            "last_error": self.last_error,
+            "last_error_time": self.last_error_time,
+        }
 
     def _get_current_settings(self):
         """Get current wake word settings, caching them for a short period."""
@@ -49,17 +71,26 @@ class WakeWordDetector:
         
         if not settings['enabled']:
             logger.info("Wake word detection is disabled in configuration")
+            self._set_error("Wake word detection is disabled in configuration")
             return
 
         if self.is_listening:
             logger.warning("Wake word detector is already listening")
             return
 
+        # Clear any previous errors when starting
+        self._clear_error()
+        
         logger.info("Starting wake word detection with words: %s", settings['wake_words'])
         self.is_listening = True
         self._stop_event.clear()
 
-        self._listen_task = asyncio.create_task(self._listen_loop(on_wake_word))
+        try:
+            self._listen_task = asyncio.create_task(self._listen_loop(on_wake_word))
+        except Exception as e:
+            self.is_listening = False
+            self._set_error(f"Failed to start wake word detection: {str(e)}")
+            raise
 
     async def stop_listening(self) -> None:
         """Stop listening for wake words."""
@@ -93,6 +124,7 @@ class WakeWordDetector:
                 # Check if wake word detection was disabled
                 if not settings['enabled']:
                     logger.info("Wake word detection disabled, stopping listener")
+                    self._set_error("Wake word detection was disabled during operation")
                     break
                 
                 # Check if we're in cooldown period
@@ -103,25 +135,37 @@ class WakeWordDetector:
 
                 # Record audio for a short period
                 logger.debug("Listening for wake word...")
-                audio = await asyncio.get_event_loop().run_in_executor(
-                    None, self._record_wake_word_audio, settings['timeout']
-                )
+                try:
+                    audio = await asyncio.get_event_loop().run_in_executor(
+                        None, self._record_wake_word_audio, settings['timeout']
+                    )
+                except Exception as e:
+                    self._set_error(f"Audio recording failed: {str(e)}")
+                    await asyncio.sleep(1.0)
+                    continue
 
                 if audio.size == 0:
                     await asyncio.sleep(0.1)
                     continue
 
                 # Transcribe and check for wake words
-                detected = await self._check_for_wake_word(audio, settings['wake_words'])
-                if detected:
-                    logger.info("Wake word detected!")
-                    self.last_detection_time = time.time()
+                try:
+                    detected = await self._check_for_wake_word(audio, settings['wake_words'])
+                    if detected:
+                        logger.info("Wake word detected!")
+                        self.last_detection_time = time.time()
+                        # Clear any previous errors on successful detection
+                        self._clear_error()
 
-                    # Trigger the wake word callback
-                    try:
-                        await on_wake_word()
-                    except Exception as e:
-                        logger.error("Error in wake word callback: %s", e)
+                        # Trigger the wake word callback
+                        try:
+                            await on_wake_word()
+                        except Exception as e:
+                            logger.error("Error in wake word callback: %s", e)
+                except Exception as e:
+                    self._set_error(f"Wake word processing failed: {str(e)}")
+                    await asyncio.sleep(1.0)
+                    continue
 
                 # Small delay to prevent overwhelming the system
                 await asyncio.sleep(0.1)
@@ -130,9 +174,11 @@ class WakeWordDetector:
                 break
             except Exception as e:
                 logger.error("Error in wake word detection loop: %s", e)
+                self._set_error(f"Unexpected error in wake word detection: {str(e)}")
                 await asyncio.sleep(1.0)  # Back off on errors
 
         logger.info("Wake word listening loop stopped")
+        self.is_listening = False
 
     def _record_wake_word_audio(self, timeout: float = None) -> np.ndarray:
         """Record a short audio clip for wake word detection."""
@@ -142,6 +188,7 @@ class WakeWordDetector:
             return record_until_silence(max_seconds=max_seconds)
         except Exception as e:
             logger.debug("Failed to record wake word audio: %s", e)
+            # Don't set error here as this will be caught by the caller
             return np.array([], dtype=np.float32)
 
     async def _check_for_wake_word(self, audio: np.ndarray, wake_words: list[str]) -> bool:

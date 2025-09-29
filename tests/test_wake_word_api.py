@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, Mock
 from fastapi.testclient import TestClient
 
 from backend.app import app
@@ -9,6 +9,56 @@ from backend.app import app
 def client():
     """Create a test client for the FastAPI app."""
     return TestClient(app)
+
+
+def test_wake_word_status_with_error_info(client):
+    """Test wake word status includes error information."""
+    mock_detector = Mock()
+    mock_detector.get_status.return_value = {
+        "is_listening": False,
+        "last_detection_time": 1234567890.0,
+        "last_error": "Audio device not found",
+        "last_error_time": 1234567891.0,
+    }
+    
+    with patch("backend.app.get_wake_word_detector", return_value=mock_detector):
+        with patch("backend.app.load_wake_word_settings") as mock_settings:
+            mock_settings.return_value.enabled = True
+            mock_settings.return_value.wake_words = ["test"]
+            
+            response = client.get("/api/wake-word/status")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["enabled"] is True
+            assert data["wake_words"] == ["test"]
+            assert data["is_listening"] is False
+            assert data["last_error"] == "Audio device not found"
+            assert data["last_error_time"] == 1234567891.0
+            assert data["last_detection_time"] == 1234567890.0
+
+
+def test_wake_word_status_no_error(client):
+    """Test wake word status when no error is present."""
+    mock_detector = Mock()
+    mock_detector.get_status.return_value = {
+        "is_listening": True,
+        "last_detection_time": 1234567890.0,
+        "last_error": None,
+        "last_error_time": None,
+    }
+    
+    with patch("backend.app.get_wake_word_detector", return_value=mock_detector):
+        with patch("backend.app.load_wake_word_settings") as mock_settings:
+            mock_settings.return_value.enabled = True
+            mock_settings.return_value.wake_words = ["test"]
+            
+            response = client.get("/api/wake-word/status")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["enabled"] is True
+            assert data["is_listening"] is True
+            assert data["last_error"] is None
+            assert data["last_error_time"] is None
 
 
 def test_wake_word_status_disabled(client):

@@ -409,15 +409,25 @@
     };
 
     // Wake word status checking functionality
-    function updateWakeWordIndicator(isActive, isListening) {
+    function updateWakeWordIndicator(status) {
       if (!wakeWordIndicator) return;
       
-      if (isActive && isListening) {
+      const { enabled, is_listening, last_error, last_error_time } = status;
+      
+      if (enabled && is_listening) {
         wakeWordIndicator.className = 'wake-word-indicator active';
         wakeWordIndicator.title = 'Wake word aktiv - lyssnar';
-      } else if (isActive) {
+      } else if (enabled) {
         wakeWordIndicator.className = 'wake-word-indicator inactive';
-        wakeWordIndicator.title = 'Wake word aktiverad men lyssnar inte';
+        
+        // Show error information if available
+        if (last_error && last_error_time) {
+          const errorDate = new Date(last_error_time * 1000);
+          const timeStr = errorDate.toLocaleTimeString('sv-SE');
+          wakeWordIndicator.title = `Wake word aktiverad men lyssnar inte\\nSenaste fel (${timeStr}): ${last_error}`;
+        } else {
+          wakeWordIndicator.title = 'Wake word aktiverad men lyssnar inte';
+        }
       } else {
         wakeWordIndicator.className = 'wake-word-indicator inactive';
         wakeWordIndicator.title = 'Wake word avaktiverad';
@@ -428,10 +438,10 @@
       try {
         const res = await fetch('/api/wake-word/status');
         const status = await res.json();
-        updateWakeWordIndicator(status.enabled, status.is_listening);
+        updateWakeWordIndicator(status);
       } catch (err) {
         console.error('Failed to check wake word status:', err);
-        updateWakeWordIndicator(false, false);
+        updateWakeWordIndicator({ enabled: false, is_listening: false });
       }
     }
 
