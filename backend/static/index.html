@@ -60,6 +60,7 @@
       height: 12px;
       border-radius: 50%;
       transition: all 0.3s ease;
+      cursor: pointer;
     }
     .wake-word-indicator.inactive {
       background-color: #dc3545;
@@ -73,6 +74,75 @@
     @keyframes wake-word-pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.2); opacity: 0.8; }
+    }
+    .wake-word-status-panel {
+      position: fixed;
+      top: 60px;
+      left: 18px;
+      min-width: 280px;
+      max-width: 400px;
+      background: rgba(12, 21, 39, 0.95);
+      border: 1px solid rgba(67, 90, 135, 0.6);
+      border-radius: 12px;
+      padding: 16px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      z-index: 1000;
+      font-size: 14px;
+      line-height: 1.4;
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: all 0.3s ease;
+      pointer-events: none;
+    }
+    .wake-word-status-panel.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+    .wake-word-status-panel h3 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #eef2ff;
+    }
+    .wake-word-status-panel .status-item {
+      margin-bottom: 8px;
+    }
+    .wake-word-status-panel .status-label {
+      font-weight: 500;
+      color: #b8c5d1;
+    }
+    .wake-word-status-panel .status-value {
+      color: #eef2ff;
+      margin-left: 8px;
+    }
+    .wake-word-status-panel .wake-words-list {
+      background: rgba(17, 27, 46, 0.6);
+      border-radius: 6px;
+      padding: 8px;
+      margin-top: 4px;
+    }
+    .wake-word-status-panel .wake-word-item {
+      background: rgba(67, 90, 135, 0.3);
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin: 2px 0;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .wake-word-status-panel .error-info {
+      background: rgba(220, 53, 69, 0.2);
+      border: 1px solid rgba(220, 53, 69, 0.4);
+      border-radius: 6px;
+      padding: 8px;
+      margin-top: 4px;
+      color: #ffb3ba;
+    }
+    .wake-word-status-panel .time-info {
+      font-size: 12px;
+      color: #8a9ba8;
+      font-style: italic;
     }
     .wrap {
       position: relative;
@@ -184,6 +254,32 @@
     <span class="wake-word-indicator inactive" id="wake-word-indicator" title="Wake word status"></span>
     <span>Pi5 Röstassistent</span>
   </div>
+  
+  <!-- Wake word detailed status panel -->
+  <div class="wake-word-status-panel" id="wake-word-status-panel">
+    <h3>Wake Word Status</h3>
+    <div class="status-item">
+      <span class="status-label">Status:</span>
+      <span class="status-value" id="wake-word-main-status">-</span>
+    </div>
+    <div class="status-item">
+      <span class="status-label">Konfigurerade wake words:</span>
+      <div class="wake-words-list" id="wake-words-list">
+        <div class="wake-word-item">Ingen konfigurerad</div>
+      </div>
+    </div>
+    <div class="status-item" id="last-detection-item">
+      <span class="status-label">Senaste detektering:</span>
+      <span class="status-value time-info" id="last-detection-time">Aldrig</span>
+    </div>
+    <div class="status-item" id="error-item" style="display: none;">
+      <span class="status-label">Fel:</span>
+      <div class="error-info" id="error-info">
+        <div id="error-message">-</div>
+        <div class="time-info" id="error-time">-</div>
+      </div>
+    </div>
+  </div>
   <div class="wrap">
     <h1 id="assistant-title">Pi5 Röstassistent</h1>
     <div class="actions">
@@ -215,6 +311,14 @@
     const assistantBrand = document.getElementById('assistant-brand');
     const assistantTitle = document.getElementById('assistant-title');
     const wakeWordIndicator = document.getElementById('wake-word-indicator');
+    const wakeWordStatusPanel = document.getElementById('wake-word-status-panel');
+    const wakeWordMainStatus = document.getElementById('wake-word-main-status');
+    const wakeWordsList = document.getElementById('wake-words-list');
+    const lastDetectionTime = document.getElementById('last-detection-time');
+    const lastDetectionItem = document.getElementById('last-detection-item');
+    const errorItem = document.getElementById('error-item');
+    const errorMessage = document.getElementById('error-message');
+    const errorTime = document.getElementById('error-time');
     const root = document.documentElement;
 
     const defaultSettings = {
@@ -412,25 +516,64 @@
     function updateWakeWordIndicator(status) {
       if (!wakeWordIndicator) return;
       
-      const { enabled, is_listening, last_error, last_error_time } = status;
+      const { enabled, wake_words, is_listening, last_error, last_error_time, last_detection_time } = status;
       
+      // Update the indicator dot and basic tooltip
       if (enabled && is_listening) {
         wakeWordIndicator.className = 'wake-word-indicator active';
-        wakeWordIndicator.title = 'Wake word aktiv - lyssnar';
+        wakeWordIndicator.title = 'Wake word aktiv - lyssnar (klicka för detaljer)';
+        wakeWordMainStatus.textContent = 'Aktiv - lyssnar';
       } else if (enabled) {
         wakeWordIndicator.className = 'wake-word-indicator inactive';
+        wakeWordIndicator.title = 'Wake word aktiverad men lyssnar inte (klicka för detaljer)';
         
-        // Show error information if available
         if (last_error && last_error_time) {
-          const errorDate = new Date(last_error_time * 1000);
-          const timeStr = errorDate.toLocaleTimeString('sv-SE');
-          wakeWordIndicator.title = `Wake word aktiverad men lyssnar inte\\nSenaste fel (${timeStr}): ${last_error}`;
+          wakeWordMainStatus.textContent = 'Aktiverad - fel upptäckt';
         } else {
-          wakeWordIndicator.title = 'Wake word aktiverad men lyssnar inte';
+          wakeWordMainStatus.textContent = 'Aktiverad - lyssnar inte';
         }
       } else {
         wakeWordIndicator.className = 'wake-word-indicator inactive';
-        wakeWordIndicator.title = 'Wake word avaktiverad';
+        wakeWordIndicator.title = 'Wake word avaktiverad (klicka för detaljer)';
+        wakeWordMainStatus.textContent = 'Avaktiverad';
+      }
+      
+      // Update detailed status panel
+      updateDetailedWakeWordStatus(status);
+    }
+    
+    function updateDetailedWakeWordStatus(status) {
+      const { enabled, wake_words, is_listening, last_error, last_error_time, last_detection_time } = status;
+      
+      // Update wake words list
+      if (wake_words && wake_words.length > 0) {
+        wakeWordsList.innerHTML = wake_words.map(word => 
+          `<div class="wake-word-item">"${word}"</div>`
+        ).join('');
+      } else {
+        wakeWordsList.innerHTML = '<div class="wake-word-item">Inga wake words konfigurerade</div>';
+      }
+      
+      // Update last detection time
+      if (last_detection_time && last_detection_time > 0) {
+        const detectionDate = new Date(last_detection_time * 1000);
+        const timeStr = detectionDate.toLocaleString('sv-SE');
+        lastDetectionTime.textContent = timeStr;
+        lastDetectionItem.style.display = 'block';
+      } else {
+        lastDetectionTime.textContent = 'Aldrig';
+        lastDetectionItem.style.display = 'block';
+      }
+      
+      // Update error information
+      if (last_error && last_error_time) {
+        const errorDate = new Date(last_error_time * 1000);
+        const timeStr = errorDate.toLocaleString('sv-SE');
+        errorMessage.textContent = last_error;
+        errorTime.textContent = `Tid: ${timeStr}`;
+        errorItem.style.display = 'block';
+      } else {
+        errorItem.style.display = 'none';
       }
     }
 
@@ -448,6 +591,38 @@
     // Check wake word status periodically
     checkWakeWordStatus();
     setInterval(checkWakeWordStatus, 5000); // Check every 5 seconds
+    
+    // Handle wake word indicator click to show/hide detailed status
+    let statusPanelVisible = false;
+    
+    if (wakeWordIndicator) {
+      wakeWordIndicator.addEventListener('click', (e) => {
+        e.stopPropagation();
+        statusPanelVisible = !statusPanelVisible;
+        if (statusPanelVisible) {
+          wakeWordStatusPanel.classList.add('show');
+        } else {
+          wakeWordStatusPanel.classList.remove('show');
+        }
+      });
+    }
+    
+    // Hide status panel when clicking outside
+    document.addEventListener('click', (e) => {
+      if (statusPanelVisible && 
+          !wakeWordStatusPanel.contains(e.target) && 
+          !wakeWordIndicator.contains(e.target)) {
+        statusPanelVisible = false;
+        wakeWordStatusPanel.classList.remove('show');
+      }
+    });
+    
+    // Prevent status panel clicks from closing it
+    if (wakeWordStatusPanel) {
+      wakeWordStatusPanel.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    }
 
     loadUiSettings();
   </script>
