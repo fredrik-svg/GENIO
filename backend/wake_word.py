@@ -12,6 +12,7 @@ from .config import (
     WAKE_WORD_TIMEOUT,
     WAKE_WORD_COOLDOWN,
 )
+from .wake_word_settings import load_wake_word_settings
 from .audio import record_until_silence, save_wav_mono16
 from .ai import stt_transcribe_wav
 
@@ -26,10 +27,27 @@ class WakeWordDetector:
         self.last_detection_time = 0.0
         self._listen_task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
+        self._current_settings = None
+
+    def _get_current_settings(self):
+        """Get current wake word settings, caching them for a short period."""
+        if self._current_settings is None or time.time() - self._current_settings.get('_loaded_at', 0) > 30:
+            # Reload settings every 30 seconds to pick up changes
+            settings = load_wake_word_settings()
+            self._current_settings = {
+                'enabled': settings.enabled,
+                'wake_words': settings.wake_words,
+                'timeout': settings.timeout,
+                'cooldown': settings.cooldown,
+                '_loaded_at': time.time()
+            }
+        return self._current_settings
 
     async def start_listening(self, on_wake_word: Callable[[], Awaitable[None]]) -> None:
         """Start continuous listening for wake words."""
-        if not WAKE_WORD_ENABLED:
+        settings = self._get_current_settings()
+        
+        if not settings['enabled']:
             logger.info("Wake word detection is disabled in configuration")
             return
 
@@ -37,7 +55,7 @@ class WakeWordDetector:
             logger.warning("Wake word detector is already listening")
             return
 
-        logger.info("Starting wake word detection with words: %s", WAKE_WORDS)
+        logger.info("Starting wake word detection with words: %s", settings['wake_words'])
         self.is_listening = True
         self._stop_event.clear()
 
@@ -70,16 +88,23 @@ class WakeWordDetector:
 
         while not self._stop_event.is_set():
             try:
+                settings = self._get_current_settings()
+                
+                # Check if wake word detection was disabled
+                if not settings['enabled']:
+                    logger.info("Wake word detection disabled, stopping listener")
+                    break
+                
                 # Check if we're in cooldown period
                 current_time = time.time()
-                if current_time - self.last_detection_time < WAKE_WORD_COOLDOWN:
+                if current_time - self.last_detection_time < settings['cooldown']:
                     await asyncio.sleep(0.1)
                     continue
 
                 # Record audio for a short period
                 logger.debug("Listening for wake word...")
                 audio = await asyncio.get_event_loop().run_in_executor(
-                    None, self._record_wake_word_audio
+                    None, self._record_wake_word_audio, settings['timeout']
                 )
 
                 if audio.size == 0:
@@ -87,7 +112,7 @@ class WakeWordDetector:
                     continue
 
                 # Transcribe and check for wake words
-                detected = await self._check_for_wake_word(audio)
+                detected = await self._check_for_wake_word(audio, settings['wake_words'])
                 if detected:
                     logger.info("Wake word detected!")
                     self.last_detection_time = time.time()
@@ -109,19 +134,19 @@ class WakeWordDetector:
 
         logger.info("Wake word listening loop stopped")
 
-    def _record_wake_word_audio(self) -> np.ndarray:
+    def _record_wake_word_audio(self, timeout: float = None) -> np.ndarray:
         """Record a short audio clip for wake word detection."""
         try:
-            # Use a shorter timeout for wake word detection
-            # We'll modify record_until_silence to support custom timeouts
-            return record_until_silence(max_seconds=WAKE_WORD_TIMEOUT)
+            # Use custom timeout or fall back to config default
+            max_seconds = timeout or WAKE_WORD_TIMEOUT
+            return record_until_silence(max_seconds=max_seconds)
         except Exception as e:
             logger.debug("Failed to record wake word audio: %s", e)
             return np.array([], dtype=np.float32)
 
-    async def _check_for_wake_word(self, audio: np.ndarray) -> bool:
+    async def _check_for_wake_word(self, audio: np.ndarray, wake_words: list[str]) -> bool:
         """Check if the audio contains a wake word."""
-        if not WAKE_WORDS or audio.size == 0:
+        if not wake_words or audio.size == 0:
             return False
 
         try:
@@ -139,7 +164,7 @@ class WakeWordDetector:
             logger.debug("Transcribed wake word audio: '%s'", text_lower)
 
             # Check if any wake word is present
-            for wake_word in WAKE_WORDS:
+            for wake_word in wake_words:
                 if wake_word.lower() in text_lower:
                     logger.info("Wake word '%s' detected in text: '%s'", wake_word, text_lower)
                     return True

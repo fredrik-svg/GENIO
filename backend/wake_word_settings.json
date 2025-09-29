@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "wakeWords": [
+    "hej genio",
+    "genio",
+    "hej assistant"
+  ],
+  "timeout": 5.0,
+  "cooldown": 1.0
+}

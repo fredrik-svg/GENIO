@@ -24,6 +24,7 @@ from .audio import (
 from .ai import stt_transcribe_wav, tts_speak_sv
 from .rag.service import ingest_sources as ingest_rag_sources, rag_answer, reset_index as reset_rag_index
 from .ui_settings import load_ui_settings, save_ui_settings, UISettings
+from .wake_word_settings import load_wake_word_settings, save_wake_word_settings, WakeWordSettings
 from .display_settings import (
     describe_display_settings,
     discover_display_targets,
@@ -502,12 +503,40 @@ async def stop_wake_word():
 async def wake_word_status():
     """Get wake word detection status."""
     detector = get_wake_word_detector()
+    settings = load_wake_word_settings()
     
     return JSONResponse({
-        "enabled": WAKE_WORD_ENABLED,
-        "wake_words": WAKE_WORDS,
+        "enabled": settings.enabled,
+        "wake_words": settings.wake_words,
         "is_listening": detector.is_listening,
     })
+
+
+@app.get("/api/wake-word/settings")
+async def get_wake_word_settings():
+    """Get wake word configuration settings."""
+    settings = load_wake_word_settings()
+    return JSONResponse(settings.model_dump(by_alias=True))
+
+
+@app.post("/api/wake-word/settings")
+async def update_wake_word_settings(request: Request):
+    """Update wake word configuration settings."""
+    try:
+        payload = await request.json()
+        current_settings = load_wake_word_settings()
+        new_settings = current_settings.merged_with(payload)
+        save_wake_word_settings(new_settings)
+        
+        # Notify about the settings change
+        if new_settings.enabled:
+            await notify("status: Wake word-inställningar uppdaterade och aktiverade")
+        else:
+            await notify("status: Wake word-inställningar uppdaterade och avaktiverade")
+        
+        return JSONResponse({"ok": True, "settings": new_settings.model_dump(by_alias=True)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 class AskPayload(BaseModel):
