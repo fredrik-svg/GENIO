@@ -31,12 +31,144 @@ async def test_wake_word_detector_init(detector):
     assert not detector.is_listening
     assert detector.last_detection_time == 0.0
     assert detector._listen_task is None
+    assert detector.last_error is None
+    assert detector.last_error_time is None
+
+
+def test_get_status(detector):
+    """Test getting detector status including error information."""
+    status = detector.get_status()
+    assert "is_listening" in status
+    assert "last_detection_time" in status
+    assert "last_error" in status
+    assert "last_error_time" in status
+    assert status["is_listening"] is False
+    assert status["last_error"] is None
+
+
+def test_set_error(detector):
+    """Test setting error information."""
+    error_msg = "Test error message"
+    detector._set_error(error_msg)
+    
+    assert detector.last_error == error_msg
+    assert detector.last_error_time is not None
+    
+    status = detector.get_status()
+    assert status["last_error"] == error_msg
+    assert status["last_error_time"] == detector.last_error_time
+
+
+def test_clear_error(detector):
+    """Test clearing error information."""
+    # First set an error
+    detector._set_error("Test error")
+    assert detector.last_error is not None
+    
+    # Then clear it
+    detector._clear_error()
+    assert detector.last_error is None
+    assert detector.last_error_time is None
+
+
+@pytest.mark.asyncio
+async def test_start_listening_disabled_sets_error(detector):
+    """Test that start_listening sets error when disabled."""
+    with patch.object(detector, '_get_current_settings') as mock_settings:
+        mock_settings.return_value = {
+            'enabled': False,
+            'wake_words': ['test'],
+            'timeout': 2.0,
+            'cooldown': 0.5,
+            '_loaded_at': 0
+        }
+        callback = AsyncMock()
+        await detector.start_listening(callback)
+        
+        assert not detector.is_listening
+        assert detector.last_error is not None
+        assert "disabled" in detector.last_error
+        callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_start_listening_clears_previous_error(detector, mock_config):
+    """Test that start_listening clears previous errors."""
+    # Set an initial error
+    detector._set_error("Previous error")
+    assert detector.last_error is not None
+    
+    with patch.multiple("backend.wake_word", **mock_config):
+        with patch.object(detector, "_listen_loop"):
+            callback = AsyncMock()
+            await detector.start_listening(callback)
+            
+            # Error should be cleared when successfully starting
+            assert detector.last_error is None
+            assert detector.last_error_time is None
+        
+        # Clean up
+        await detector.stop_listening()
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_sets_error_on_audio_failure(detector, mock_config):
+    """Test that listen loop sets error when audio recording fails."""
+    with patch.multiple("backend.wake_word", **mock_config):
+        with patch.object(detector, "_record_wake_word_audio", side_effect=Exception("Audio error")) as mock_record:
+            callback = AsyncMock()
+            
+            # Start listening task
+            task = asyncio.create_task(detector._listen_loop(callback))
+            
+            # Let it run briefly to trigger audio recording
+            await asyncio.sleep(0.1)
+            
+            # Stop the task
+            detector._stop_event.set()
+            await task
+            
+            # Check that error was set
+            assert detector.last_error is not None
+            assert "Audio recording failed" in detector.last_error
+
+
+@pytest.mark.asyncio
+async def test_listen_loop_sets_error_on_processing_failure(detector, mock_config):
+    """Test that listen loop sets error when wake word processing fails."""
+    audio_data = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    
+    with patch.multiple("backend.wake_word", **mock_config):
+        with patch.object(detector, "_record_wake_word_audio", return_value=audio_data):
+            with patch.object(detector, "_check_for_wake_word", side_effect=Exception("Processing error")):
+                callback = AsyncMock()
+                
+                # Start listening task
+                task = asyncio.create_task(detector._listen_loop(callback))
+                
+                # Let it run briefly to trigger processing
+                await asyncio.sleep(0.1)
+                
+                # Stop the task
+                detector._stop_event.set()
+                await task
+                
+                # Check that error was set
+                assert detector.last_error is not None
+                assert "Wake word processing failed" in detector.last_error
 
 
 @pytest.mark.asyncio
 async def test_start_listening_when_disabled(detector):
     """Test that start_listening does nothing when wake word is disabled."""
-    with patch("backend.wake_word.WAKE_WORD_ENABLED", False):
+    with patch.object(detector, '_get_current_settings') as mock_settings:
+        mock_settings.return_value = {
+            'enabled': False,
+            'wake_words': ['test'],
+            'timeout': 2.0,
+            'cooldown': 0.5,
+            '_loaded_at': 0
+        }
         callback = AsyncMock()
         await detector.start_listening(callback)
         assert not detector.is_listening
@@ -77,33 +209,34 @@ async def test_stop_listening(detector, mock_config):
 async def test_check_for_wake_word_detects_wake_word(detector):
     """Test wake word detection in transcribed text."""
     audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["hej genio", "genio"]
     
-    with patch("backend.wake_word.WAKE_WORDS", ["hej genio", "genio"]):
-        with patch("backend.wake_word.save_wav_mono16") as mock_save:
-            with patch("backend.wake_word.stt_transcribe_wav", return_value="hej genio vad händer"):
-                mock_save.return_value = None
-                result = await detector._check_for_wake_word(audio)
-                assert result is True
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch("backend.wake_word.stt_transcribe_wav", return_value="hej genio vad händer"):
+            mock_save.return_value = None
+            result = await detector._check_for_wake_word(audio, wake_words)
+            assert result is True
 
 
 @pytest.mark.asyncio
 async def test_check_for_wake_word_no_wake_word(detector):
     """Test that non-wake-word text is not detected."""
     audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["hej genio", "genio"]
     
-    with patch("backend.wake_word.WAKE_WORDS", ["hej genio", "genio"]):
-        with patch("backend.wake_word.save_wav_mono16") as mock_save:
-            with patch("backend.wake_word.stt_transcribe_wav", return_value="hej hur mår du"):
-                mock_save.return_value = None
-                result = await detector._check_for_wake_word(audio)
-                assert result is False
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch("backend.wake_word.stt_transcribe_wav", return_value="hej hur mår du"):
+            mock_save.return_value = None
+            result = await detector._check_for_wake_word(audio, wake_words)
+            assert result is False
 
 
 @pytest.mark.asyncio
 async def test_check_for_wake_word_empty_audio(detector):
     """Test that empty audio returns False."""
     audio = np.array([], dtype=np.float32)
-    result = await detector._check_for_wake_word(audio)
+    wake_words = ["genio"]
+    result = await detector._check_for_wake_word(audio, wake_words)
     assert result is False
 
 
@@ -111,13 +244,13 @@ async def test_check_for_wake_word_empty_audio(detector):
 async def test_check_for_wake_word_stt_error(detector):
     """Test that STT errors are handled gracefully."""
     audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["genio"]
     
-    with patch("backend.wake_word.WAKE_WORDS", ["genio"]):
-        with patch("backend.wake_word.save_wav_mono16") as mock_save:
-            with patch("backend.wake_word.stt_transcribe_wav", side_effect=Exception("STT error")):
-                mock_save.return_value = None
-                result = await detector._check_for_wake_word(audio)
-                assert result is False
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch("backend.wake_word.stt_transcribe_wav", side_effect=Exception("STT error")):
+            mock_save.return_value = None
+            result = await detector._check_for_wake_word(audio, wake_words)
+            assert result is False
 
 
 def test_record_wake_word_audio(detector):

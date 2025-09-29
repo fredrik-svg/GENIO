@@ -504,11 +504,15 @@ async def wake_word_status():
     """Get wake word detection status."""
     detector = get_wake_word_detector()
     settings = load_wake_word_settings()
+    detector_status = detector.get_status()
     
     return JSONResponse({
         "enabled": settings.enabled,
         "wake_words": settings.wake_words,
-        "is_listening": detector.is_listening,
+        "is_listening": detector_status["is_listening"],
+        "last_error": detector_status["last_error"],
+        "last_error_time": detector_status["last_error_time"],
+        "last_detection_time": detector_status["last_detection_time"],
     })
 
 
