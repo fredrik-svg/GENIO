@@ -434,6 +434,29 @@ def discover_display_targets() -> tuple[list[dict[str, Any]], list[str]]:
                     names.append(str(monitor_name))
             if names:
                 entry["label"] = f"{candidate} – {', '.join(names)}"
+            
+            # Add separate entries for each X11 monitor using .screen notation
+            if len(x11_monitors) > 1 and candidate.startswith(":"):
+                for monitor in x11_monitors:
+                    monitor_index = monitor.get("index")
+                    monitor_name = monitor.get("name")
+                    if monitor_index is None or not monitor_name:
+                        continue
+                    
+                    # Create display target like :0.0, :0.1, etc.
+                    screen_value = f"{candidate}.{monitor_index}"
+                    screen_label_parts = [monitor_name]
+                    
+                    width = monitor.get("width")
+                    height = monitor.get("height")
+                    if isinstance(width, int) and isinstance(height, int):
+                        screen_label_parts.append(f"{width}x{height}")
+                    
+                    if monitor.get("primary"):
+                        screen_label_parts.append("primär")
+                    
+                    screen_label = f"{screen_value} – {', '.join(screen_label_parts)}"
+                    add_target(screen_value, screen_label, "x11_screen")
         else:
             wayland_monitors = _discover_wayland_monitors(candidate, sources)
             if wayland_monitors:
