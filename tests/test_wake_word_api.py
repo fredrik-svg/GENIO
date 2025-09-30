@@ -63,8 +63,19 @@ def test_wake_word_status_no_error(client):
 
 def test_wake_word_status_disabled(client):
     """Test wake word status when disabled."""
-    with patch("backend.app.WAKE_WORD_ENABLED", False):
-        with patch("backend.app.WAKE_WORDS", ["test"]):
+    mock_detector = Mock()
+    mock_detector.get_status.return_value = {
+        "is_listening": False,
+        "last_detection_time": 0.0,
+        "last_error": None,
+        "last_error_time": None,
+    }
+    
+    with patch("backend.app.get_wake_word_detector", return_value=mock_detector):
+        with patch("backend.app.load_wake_word_settings") as mock_settings:
+            mock_settings.return_value.enabled = False
+            mock_settings.return_value.wake_words = ["test"]
+            
             response = client.get("/api/wake-word/status")
             assert response.status_code == 200
             data = response.json()
@@ -75,8 +86,19 @@ def test_wake_word_status_disabled(client):
 
 def test_wake_word_status_enabled(client):
     """Test wake word status when enabled."""
-    with patch("backend.app.WAKE_WORD_ENABLED", True):
-        with patch("backend.app.WAKE_WORDS", ["hej genio", "genio"]):
+    mock_detector = Mock()
+    mock_detector.get_status.return_value = {
+        "is_listening": False,
+        "last_detection_time": 0.0,
+        "last_error": None,
+        "last_error_time": None,
+    }
+    
+    with patch("backend.app.get_wake_word_detector", return_value=mock_detector):
+        with patch("backend.app.load_wake_word_settings") as mock_settings:
+            mock_settings.return_value.enabled = True
+            mock_settings.return_value.wake_words = ["hej genio", "genio"]
+            
             response = client.get("/api/wake-word/status")
             assert response.status_code == 200
             data = response.json()
