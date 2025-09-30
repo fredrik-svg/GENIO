@@ -234,7 +234,7 @@
     .display-targets-item {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
       padding: 12px 14px;
       border-radius: 14px;
       background: rgba(18, 36, 70, 0.65);
@@ -243,6 +243,28 @@
     .display-targets-title {
       font-weight: 600;
       font-size: 16px;
+    }
+    .display-targets-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .display-action-btn {
+      background: rgba(30, 55, 94, 0.95);
+      border: 1px solid rgba(90, 128, 185, 0.7);
+      color: #eef2ff;
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: transform 0.1s ease, background 0.15s ease;
+    }
+    .display-action-btn:hover {
+      background: rgba(40, 70, 115, 0.95);
+    }
+    .display-action-btn:active {
+      transform: scale(0.97);
     }
     .display-targets-monitors {
       margin: 0;
@@ -814,6 +836,30 @@
           item.appendChild(fallback);
         }
 
+        const actions = document.createElement('div');
+        actions.className = 'display-targets-actions';
+
+        const setAssistantBtn = document.createElement('button');
+        setAssistantBtn.type = 'button';
+        setAssistantBtn.className = 'display-action-btn';
+        setAssistantBtn.textContent = 'Använd för Assistent';
+        setAssistantBtn.title = `Välj ${target.value} för assistentskärm`;
+        setAssistantBtn.addEventListener('click', () => {
+          setDisplayForControl('assistant', target.value);
+        });
+        actions.appendChild(setAssistantBtn);
+
+        const setDisplayBtn = document.createElement('button');
+        setDisplayBtn.type = 'button';
+        setDisplayBtn.className = 'display-action-btn';
+        setDisplayBtn.textContent = 'Använd för Visningsläge';
+        setDisplayBtn.title = `Välj ${target.value} för visningslägesskärm`;
+        setDisplayBtn.addEventListener('click', () => {
+          setDisplayForControl('display', target.value);
+        });
+        actions.appendChild(setDisplayBtn);
+
+        item.appendChild(actions);
         list.appendChild(item);
       });
 
@@ -826,6 +872,43 @@
       }
 
       displayTargetsContent.appendChild(list);
+    }
+
+    function setDisplayForControl(controlKey, displayValue){
+      const ctrl = displayControls[controlKey];
+      if(!ctrl || !ctrl.select){
+        return;
+      }
+
+      const options = Array.from(ctrl.select.options || []);
+      const matchingOption = options.find(opt => opt.value === displayValue);
+
+      if(matchingOption){
+        ctrl.select.value = displayValue;
+        toggleDisplayManualField(ctrl.manualField, false);
+        if(ctrl.manualInput){
+          ctrl.manualInput.value = displayValue;
+        }
+        updateManualOptionLabel(ctrl, '');
+      } else {
+        ctrl.select.value = 'manual';
+        toggleDisplayManualField(ctrl.manualField, true);
+        if(ctrl.manualInput){
+          ctrl.manualInput.value = displayValue;
+          ctrl.manualInput.focus();
+        }
+        updateManualOptionLabel(ctrl, displayValue);
+      }
+
+      const roleName = controlKey === 'assistant' ? 'assistenten' : 'visningsläget';
+      if(ctrl.status){
+        ctrl.status.textContent = `Vald skärm för ${roleName}: ${displayValue}`;
+      }
+
+      window.scrollTo({
+        top: displayForm.offsetTop - 20,
+        behavior: 'smooth'
+      });
     }
 
     function formatManualLabel(value){
