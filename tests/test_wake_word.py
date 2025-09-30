@@ -73,7 +73,7 @@ def test_clear_error(detector):
 
 @pytest.mark.asyncio
 async def test_start_listening_disabled_sets_error(detector):
-    """Test that start_listening sets error when disabled."""
+    """Test that start_listening raises exception when disabled."""
     with patch.object(detector, '_get_current_settings') as mock_settings:
         mock_settings.return_value = {
             'enabled': False,
@@ -83,7 +83,9 @@ async def test_start_listening_disabled_sets_error(detector):
             '_loaded_at': 0
         }
         callback = AsyncMock()
-        await detector.start_listening(callback)
+        
+        with pytest.raises(RuntimeError, match="disabled"):
+            await detector.start_listening(callback)
         
         assert not detector.is_listening
         assert detector.last_error is not None
@@ -160,7 +162,7 @@ async def test_listen_loop_sets_error_on_processing_failure(detector, mock_confi
 
 @pytest.mark.asyncio
 async def test_start_listening_when_disabled(detector):
-    """Test that start_listening does nothing when wake word is disabled."""
+    """Test that start_listening raises exception when wake word is disabled."""
     with patch.object(detector, '_get_current_settings') as mock_settings:
         mock_settings.return_value = {
             'enabled': False,
@@ -170,7 +172,10 @@ async def test_start_listening_when_disabled(detector):
             '_loaded_at': 0
         }
         callback = AsyncMock()
-        await detector.start_listening(callback)
+        
+        with pytest.raises(RuntimeError, match="disabled"):
+            await detector.start_listening(callback)
+        
         assert not detector.is_listening
         callback.assert_not_called()
 

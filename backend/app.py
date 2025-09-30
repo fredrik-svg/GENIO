@@ -474,8 +474,7 @@ async def start_wake_word():
         await notify("status: Wake word detected!")
         data = await full_converse_flow(trigger="wake-word")
         # Optionally restart listening after conversation
-        if detector.is_listening:
-            asyncio.create_task(detector.start_listening(on_wake_word))
+        # Note: The listen loop should still be running, so no need to restart
     
     try:
         await detector.start_listening(on_wake_word)
