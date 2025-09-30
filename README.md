@@ -162,10 +162,21 @@ Systemet stöder kontinuerlig wake word-detektering:
 
 API-endpoints för wake word:
 - `POST /api/wake-word/start` – Starta wake word-lyssning
-- `POST /api/wake-word/stop` – Stoppa wake word-lyssning  
+- `POST /api/wake-word/stop` – Stoppa wake word-lyssning
 - `GET /api/wake-word/status` – Kontrollera wake word-status
 
 När wake word detekteras startas automatiskt en konversation.
+
+#### Felsökning när wake word inte triggar
+
+1. **Kontrollera statuspanelen i adminläget** – Öppna `http://localhost:8080/admin` och klicka på wake word-indikatorn.
+   Där visas om wake word är aktiverad, om lyssningen körs samt eventuell senaste feltext.
+2. **Läs status via API** – Kör `curl http://localhost:8080/api/wake-word/status` (eventuellt pipat till `jq`).
+   Svaret innehåller fältet `last_error` och tidsstämplar (`last_error_time`, `last_detection_time`).
+3. **Kontrollera backend-loggarna** – Kör `tail -f backend.log` om du kör manuellt, eller `journalctl -u pi5-assistant -f`
+   när tjänsten körs via systemd. Modulen `backend.wake_word` loggar detaljer om inspelning, transkribering och fel.
+4. **Verifiera mikrofonen** – Säkerställ att `arecord -l` listar din mikrofon och testa ett kort inspelningskommando
+   (`arecord -d 3 test.wav` följt av `aplay test.wav`). Utan fungerande ljudinmatning kan wake word inte aktiveras.
 
 ### Byt AI-leverantör
 
