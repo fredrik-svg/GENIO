@@ -4,9 +4,9 @@ After=network.target sound.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/apps/pi5-assistant
+WorkingDirectory=/home/pi/apps/GENIO
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/pi/apps/pi5-assistant/.venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8080
+ExecStart=/home/pi/apps/GENIO/.venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port 8080
 User=pi
 Restart=on-failure
 
