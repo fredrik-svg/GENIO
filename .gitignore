@@ -44,3 +44,8 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# User configuration
+backend/display_settings.json
+backend/audio_settings.json
+logs/
