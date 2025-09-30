@@ -70,13 +70,15 @@ class WakeWordDetector:
         settings = self._get_current_settings()
         
         if not settings['enabled']:
-            logger.info("Wake word detection is disabled in configuration")
-            self._set_error("Wake word detection is disabled in configuration")
-            return
+            error_msg = "Wake word detection is disabled in configuration"
+            logger.info(error_msg)
+            self._set_error(error_msg)
+            raise RuntimeError(error_msg)
 
         if self.is_listening:
-            logger.warning("Wake word detector is already listening")
-            return
+            error_msg = "Wake word detector is already listening"
+            logger.warning(error_msg)
+            raise RuntimeError(error_msg)
 
         # Clear any previous errors when starting
         self._clear_error()
