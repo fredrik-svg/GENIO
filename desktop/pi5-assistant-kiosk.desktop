@@ -2,7 +2,7 @@
 Type=Application
 Name=GENIO Assistant (Kiosk)
 Comment=Starta GENIO AI i helskärmsläge (Chromium kiosk).
-Exec=/home/apps/GENIO/scripts/pi5-assistant-kiosk.sh
+Exec=/home/pi/apps/pi5-assistant/scripts/pi5-assistant-kiosk.sh
 Icon=chromium-browser
 Terminal=false
 Categories=Utility;AudioVideo;
