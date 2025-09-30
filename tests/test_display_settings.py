@@ -186,3 +186,47 @@ def test_discover_display_targets_wayland_registry(monkeypatch):
     assert monitor["width"] == 2560
     assert "WL-2" in wayland_entry["label"]
     assert "2560x1440" in wayland_entry["label"]
+
+
+def test_discover_display_targets_multiple_x11_monitors(monkeypatch):
+    """Test that multiple X11 monitors generate separate .screen entries."""
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+
+    def fake_listdir(path):
+        assert path == "/tmp/.X11-unix"
+        return ["X0"]
+
+    def fake_check_output(cmd, text, stderr, env):  # noqa: ARG001
+        if env.get("DISPLAY") == ":0":
+            # Simulate two monitors like XWAYLAND0 and XWAYLAND1
+            return "Monitors: 2\n 0: +*XWAYLAND0 1920/598x1080/336+0+0  XWAYLAND0\n 1: +XWAYLAND1 1024/300x600/200+1920+0  XWAYLAND1\n"
+        return "Monitors: 0\n"
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+    monkeypatch.setattr(display_settings.subprocess, "check_output", fake_check_output)
+
+    targets, warnings = display_settings.discover_display_targets()
+
+    assert warnings == []
+    
+    # Find :0 entry
+    zero_entry = next(entry for entry in targets if entry["value"] == ":0")
+    assert "XWAYLAND0" in zero_entry["label"]
+    assert "XWAYLAND1" in zero_entry["label"]
+    assert len(zero_entry["monitors"]) == 2
+    
+    # Find :0.0 entry (first monitor)
+    zero_zero_entry = next((entry for entry in targets if entry["value"] == ":0.0"), None)
+    assert zero_zero_entry is not None
+    assert "XWAYLAND0" in zero_zero_entry["label"]
+    assert "1920x1080" in zero_zero_entry["label"]
+    assert "primär" in zero_zero_entry["label"]
+    
+    # Find :0.1 entry (second monitor)
+    zero_one_entry = next((entry for entry in targets if entry["value"] == ":0.1"), None)
+    assert zero_one_entry is not None
+    assert "XWAYLAND1" in zero_one_entry["label"]
+    assert "1024x600" in zero_one_entry["label"]
+    assert "primär" not in zero_one_entry["label"]

@@ -77,6 +77,7 @@ Kioskskriptet kan även öppna **två** Chromium-fönster: huvudassistenten och 
 - Standardläget (`SECONDARY_DISPLAY_MODE=auto`) försöker upptäcka minst två skärmar via `xrandr` innan ett extra fönster startas.
 - Sätt `SECONDARY_DISPLAY_MODE=always` om du vill tvinga två fönster även utan automatisk upptäckt.
 - Välj X11-skärm (t.ex. `:0.0` och `:0.1`) med `PRIMARY_DISPLAY_TARGET` och `SECONDARY_DISPLAY_TARGET` om du använder separata display-heads.
+  - Vid flera skärmar (t.ex. XWayland med XWAYLAND0 och XWAYLAND1) skapas separata val `:0.0` och `:0.1` automatiskt i admin-gränssnittet.
 - Varje Chromium-instans använder en egen profilkatalog under `.chromium-profiles/` (kan ändras med `CHROMIUM_PROFILE_BASE`).
 - Extra argument kan skickas via `PRIMARY_BROWSER_EXTRA_ARGS` respektive `SECONDARY_BROWSER_EXTRA_ARGS` (blankstegsseparerade flaggor).
 
