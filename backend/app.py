@@ -531,11 +531,33 @@ async def update_wake_word_settings(request: Request):
         new_settings = current_settings.merged_with(payload)
         save_wake_word_settings(new_settings)
         
-        # Notify about the settings change
+        detector = get_wake_word_detector()
+        
+        # Auto-start or auto-stop based on enabled state
         if new_settings.enabled:
-            await notify("status: Wake word-inställningar uppdaterade och aktiverade")
+            # Try to start wake word detection if not already listening
+            if not detector.is_listening:
+                async def on_wake_word():
+                    """Callback when wake word is detected."""
+                    await notify("status: Wake word detected!")
+                    data = await full_converse_flow(trigger="wake-word")
+                    # Note: The listen loop should still be running, so no need to restart
+                
+                try:
+                    await detector.start_listening(on_wake_word)
+                    await notify("status: Wake word-inställningar uppdaterade och aktiverade - lyssnar nu")
+                except Exception as e:
+                    logger.warning("Failed to auto-start wake word detection: %s", e)
+                    await notify(f"status: Wake word-inställningar sparade men kunde inte starta: {e}")
+            else:
+                await notify("status: Wake word-inställningar uppdaterade (redan aktiv)")
         else:
-            await notify("status: Wake word-inställningar uppdaterade och avaktiverade")
+            # Stop wake word detection if it's running
+            if detector.is_listening:
+                await detector.stop_listening()
+                await notify("status: Wake word-inställningar uppdaterade och avaktiverade - stoppad")
+            else:
+                await notify("status: Wake word-inställningar uppdaterade och avaktiverade")
         
         return JSONResponse({"ok": True, "settings": new_settings.model_dump(by_alias=True)})
     except Exception as e:
