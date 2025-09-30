@@ -64,7 +64,7 @@ install -Dm644 desktop/pi5-assistant-kiosk.desktop \
   ~/.local/share/applications/pi5-assistant-kiosk.desktop
 
 # uppdatera genvägen om projektet ligger på en annan sökväg
-sed -i "s|/home/pi/apps/pi5-assistant|$PWD|" \
+sed -i "s|/home/pi/apps/GENIO|$PWD|" \
   ~/.local/share/applications/pi5-assistant-kiosk.desktop
 ```
 
@@ -88,7 +88,7 @@ SECONDARY_DISPLAY_MODE=always \
 PRIMARY_DISPLAY_TARGET=:0.0 \
 SECONDARY_DISPLAY_TARGET=:0.1 \
 SECONDARY_BROWSER_EXTRA_ARGS="--window-position=0,0" \
-~/apps/pi5-assistant/scripts/pi5-assistant-kiosk.sh
+~/apps/GENIO/scripts/pi5-assistant-kiosk.sh
 ```
 
 ## Arkitektur
@@ -235,7 +235,7 @@ uvicorn backend.app:app --host 0.0.0.0 --port 8080
 
 ### Systemd-tjänst (Git-version)
 
-Just nu pekar servicefilen på katalogen `/home/pi/apps/pi5-assistant`. Om du klonade någon annanstans, **uppdatera** `WorkingDirectory` och `ExecStart` i `systemd/pi5-assistant.service`.
+Just nu pekar servicefilen på katalogen `/home/pi/apps/GENIO`. Om du klonade någon annanstans, **uppdatera** `WorkingDirectory` och `ExecStart` i `systemd/pi5-assistant.service`.
 
 ```bash
 sudo cp systemd/pi5-assistant.service /etc/systemd/system/
