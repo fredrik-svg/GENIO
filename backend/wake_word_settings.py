@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from .config import WAKE_WORD_ENABLED, WAKE_WORDS, WAKE_WORD_TIMEOUT, WAKE_WORD_COOLDOWN
 
@@ -29,6 +29,14 @@ class WakeWordSettings(BaseModel):
         default=WAKE_WORD_COOLDOWN,
         description="Cooldown in seconds between wake word detections.",
     )
+
+    @field_validator('wake_words', mode='before')
+    @classmethod
+    def normalize_wake_words(cls, v):
+        """Normalize wake words to lowercase and strip whitespace."""
+        if isinstance(v, list):
+            return [word.strip().lower() for word in v if isinstance(word, str) and word.strip()]
+        return v
 
     def merged_with(self, data: dict[str, Any]) -> "WakeWordSettings":
         """Return a new model with incoming data updating existing values."""

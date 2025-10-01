@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "wakeWords": [
-    "hej genio", 
+    "hej genio",
     "genio",
     "hej assistant"
   ],
