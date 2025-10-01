@@ -56,7 +56,23 @@ async def rag_answer(question: str) -> RAGAnswer:
         title = ctx.metadata.get("title") or ctx.metadata.get("source")
         header = f"Källa {idx}: {title}"
         context_texts.append(f"{header}\n{ctx.text}")
-    answer = await chat_reply_sv(question, context_sections=context_texts if context_texts else None)
+    
+    # Get MCP tools if available
+    tools = None
+    try:
+        from ..mcp_client import get_mcp_client
+        mcp_client = await get_mcp_client()
+        if mcp_client.is_enabled():
+            tools = mcp_client.get_available_tools()
+    except Exception:
+        # MCP not available or failed to initialize - continue without tools
+        pass
+    
+    answer = await chat_reply_sv(
+        question, 
+        context_sections=context_texts if context_texts else None,
+        tools=tools
+    )
     return RAGAnswer(question=question, answer=answer, contexts=contexts, used_rag=used_rag)
 
 

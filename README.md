@@ -187,6 +187,60 @@ När wake word detekteras startas automatiskt en konversation.
 
 Alla endpoints (`/api/converse`, RAG och TTS) använder samma provider, så ett byte slår igenom i hela backend.
 
+### MCP (Model Context Protocol) servrar
+
+Assistenten stöder MCP-servrar för att ansluta till externa verktyg och datakällor. MCP är ett öppet protokoll som låter AI-assistenten kommunicera med olika tjänster.
+
+#### Installation
+
+MCP-stödet är valfritt och kräver att du installerar extra beroenden:
+
+```bash
+pip install -r requirements-mcp.txt
+```
+
+#### Konfigurera MCP-servrar
+
+1. **Aktivera MCP** i `.env`:
+```bash
+MCP_ENABLED=1
+```
+
+2. **Konfigurera servrar** via `MCP_SERVERS` som JSON-objekt. Varje server behöver ett unikt namn och en kommandorad för att starta servern:
+
+```bash
+MCP_SERVERS='{
+  "filesystem": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"],
+    "env": {}
+  },
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env": {"GITHUB_TOKEN": "your-token-here"}
+  }
+}'
+```
+
+3. **Tillgängliga MCP-servrar** (exempel):
+   - `@modelcontextprotocol/server-filesystem` – Läs och skriv filer
+   - `@modelcontextprotocol/server-github` – Interagera med GitHub repositories
+   - `@modelcontextprotocol/server-memory` – Persistent minnesfunktion
+   - `@modelcontextprotocol/server-sqlite` – SQLite-databasinteraktion
+   - Fler servrar: [MCP Servers Directory](https://github.com/modelcontextprotocol/servers)
+
+4. **API-endpoints**:
+```bash
+# Kontrollera MCP-status
+curl http://localhost:8080/api/mcp/status
+
+# Lista tillgängliga verktyg
+curl http://localhost:8080/api/mcp/tools
+```
+
+När MCP är aktiverat får assistenten automatiskt tillgång till de verktyg som MCP-servrarna tillhandahåller och kan använda dem för att svara på frågor.
+
 ### Prestandaoptimering
 
 För att minska responstiden från mikrofon-aktivering till svar kan följande parametrar justeras:

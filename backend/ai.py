@@ -202,6 +202,7 @@ class BaseAIProvider:
         user_text: str,
         *,
         context_sections: Optional[Sequence[str]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         raise NotImplementedError
 
@@ -321,6 +322,7 @@ class OpenAIProvider(BaseAIProvider):
         user_text: str,
         *,
         context_sections: Optional[Sequence[str]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         messages: List[Dict[str, str]] = [
             {
@@ -342,6 +344,12 @@ class OpenAIProvider(BaseAIProvider):
             "model": self._chat_model,
             "messages": messages,
         }
+        
+        # Add tools if provided
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             response = await client.post(
                 f"{self._base_url}/chat/completions",
@@ -357,6 +365,7 @@ class OpenAIProvider(BaseAIProvider):
         user_text: str,
         *,
         context_sections: Optional[Sequence[str]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         self._require_api_key()
 
@@ -387,6 +396,10 @@ class OpenAIProvider(BaseAIProvider):
             "model": self._chat_model,
             "input": inputs,
         }
+        
+        # Add tools if provided (for OpenAI responses API)
+        if tools:
+            payload["tools"] = tools
 
         try:
             response_payload = await self._post_responses(payload)
@@ -399,17 +412,17 @@ class OpenAIProvider(BaseAIProvider):
                 exc,
                 body,
             )
-            return await self._legacy_chat_reply(user_text, context_sections=context_sections)
+            return await self._legacy_chat_reply(user_text, context_sections=context_sections, tools=tools)
         except Exception as exc:  # pragma: no cover - nätverksfel
             logger.error("Kunde inte kontakta OpenAI Voice API för chatt: %s", exc)
-            return await self._legacy_chat_reply(user_text, context_sections=context_sections)
+            return await self._legacy_chat_reply(user_text, context_sections=context_sections, tools=tools)
 
         reply_text = _extract_text_from_json_payload(response_payload).strip()
         if reply_text:
             return reply_text
 
         logger.warning("Voice API-chatt saknade textsvar – återgår till klassisk chattmodell.")
-        return await self._legacy_chat_reply(user_text, context_sections=context_sections)
+        return await self._legacy_chat_reply(user_text, context_sections=context_sections, tools=tools)
 
     async def synthesize(self, text: str) -> bytes:
         self._require_api_key()
@@ -482,6 +495,7 @@ class EchoProvider(BaseAIProvider):
         user_text: str,
         *,
         context_sections: Optional[Sequence[str]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         return user_text
 
@@ -565,10 +579,13 @@ async def stt_transcribe_wav(wav_bytes: bytes, *, language: str = "sv") -> str:
 
 
 async def chat_reply_sv(
-    user_text: str, *, context_sections: Optional[Sequence[str]] = None
+    user_text: str, 
+    *, 
+    context_sections: Optional[Sequence[str]] = None,
+    tools: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     provider = await get_ai_provider()
-    return await provider.chat_reply(user_text, context_sections=context_sections)
+    return await provider.chat_reply(user_text, context_sections=context_sections, tools=tools)
 
 
 async def tts_speak_sv(text: str) -> bytes:
