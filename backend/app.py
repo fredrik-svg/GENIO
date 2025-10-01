@@ -2,7 +2,7 @@
 import io, os, subprocess, logging, shlex, socket, uuid, asyncio
 from contextlib import suppress, asynccontextmanager
 from ipaddress import ip_address
-from typing import Literal
+from typing import Any, Dict, Literal
 
 from fastapi import FastAPI, WebSocket, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
@@ -933,5 +933,80 @@ async def mcp_list_tools():
             "error": str(exc),
             "tools": []
         })
+
+
+@app.get("/api/mcp/settings")
+async def get_mcp_settings():
+    """Get MCP configuration settings."""
+    try:
+        from .mcp_settings import load_mcp_settings
+        settings = load_mcp_settings()
+        
+        return JSONResponse({
+            "ok": True,
+            "enabled": settings.enabled,
+            "servers": {
+                name: {
+                    "command": config.command,
+                    "args": config.args,
+                    "env": config.env,
+                }
+                for name, config in settings.servers.items()
+            }
+        })
+    except Exception as exc:
+        logger.error("Failed to get MCP settings: %s", exc)
+        return JSONResponse({
+            "ok": False,
+            "error": str(exc)
+        }, status_code=500)
+
+
+class MCPSettingsUpdate(BaseModel):
+    """MCP settings update payload."""
+    enabled: bool = Field(..., description="Whether MCP is enabled")
+    servers: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Server configurations"
+    )
+
+
+@app.post("/api/mcp/settings")
+async def update_mcp_settings(payload: MCPSettingsUpdate):
+    """Update MCP configuration settings."""
+    try:
+        from .mcp_settings import load_mcp_settings, save_mcp_settings, MCPSettings, MCPServerConfig
+        
+        # Validate server configurations
+        servers = {}
+        for name, config in payload.servers.items():
+            if not name.strip():
+                return JSONResponse({
+                    "ok": False,
+                    "error": "Server name cannot be empty"
+                }, status_code=400)
+            
+            try:
+                servers[name] = MCPServerConfig.model_validate(config)
+            except Exception as e:
+                return JSONResponse({
+                    "ok": False,
+                    "error": f"Invalid configuration for server '{name}': {str(e)}"
+                }, status_code=400)
+        
+        # Save settings
+        settings = MCPSettings(enabled=payload.enabled, servers=servers)
+        save_mcp_settings(settings)
+        
+        return JSONResponse({
+            "ok": True,
+            "message": "Settings saved successfully. Please restart the application for changes to take effect."
+        })
+    except Exception as exc:
+        logger.error("Failed to update MCP settings: %s", exc)
+        return JSONResponse({
+            "ok": False,
+            "error": str(exc)
+        }, status_code=500)
 
 

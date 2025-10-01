@@ -570,6 +570,56 @@
       <div class="status" id="status">Redo.</div>
       <div class="log" id="log" aria-live="polite"></div>
     </div>
+
+    <div class="card" id="mcp-card">
+      <div>
+        <h2>MCP-serverkopplingar</h2>
+        <p class="helper">Aktivera och hantera MCP (Model Context Protocol) servrar för att koppla ihop assistenten med externa verktyg.</p>
+      </div>
+      <div class="field">
+        <label class="checkbox-label">
+          <input type="checkbox" id="mcp-enabled" />
+          <span class="checkbox-text">Aktivera MCP</span>
+        </label>
+        <small>När MCP är aktiverat kan assistenten använda verktyg från konfigurerade servrar.</small>
+      </div>
+      <div id="mcp-servers-section" style="display:none;">
+        <h3 style="margin-top:20px; font-size:20px;">Konfigurerade servrar</h3>
+        <div id="mcp-servers-list" style="display:flex; flex-direction:column; gap:16px; margin-top:12px;">
+          <p style="opacity:0.75;">Inga servrar konfigurerade.</p>
+        </div>
+        <h3 style="margin-top:24px; font-size:20px;">Lägg till ny server</h3>
+        <form id="mcp-add-server-form">
+          <div class="grid">
+            <div class="field">
+              <label for="mcp-server-name">Servernamn</label>
+              <input id="mcp-server-name" type="text" placeholder="t.ex. filesystem" required />
+              <small>Unikt namn för servern.</small>
+            </div>
+            <div class="field">
+              <label for="mcp-server-command">Kommando</label>
+              <input id="mcp-server-command" type="text" placeholder="t.ex. npx" required />
+              <small>Kommando för att starta servern.</small>
+            </div>
+          </div>
+          <div class="field" style="margin-top:12px;">
+            <label for="mcp-server-args">Argument (en per rad)</label>
+            <textarea id="mcp-server-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;/path/to/files"></textarea>
+            <small>Kommandoargument, ett per rad.</small>
+          </div>
+          <div class="field" style="margin-top:12px;">
+            <label for="mcp-server-env">Miljövariabler (JSON)</label>
+            <textarea id="mcp-server-env" rows="2" placeholder='{"GITHUB_TOKEN": "your-token"}'></textarea>
+            <small>Valfria miljövariabler i JSON-format.</small>
+          </div>
+          <button class="btn" type="submit" style="margin-top:12px;">Lägg till server</button>
+        </form>
+      </div>
+      <div class="grid" style="margin-top:18px;">
+        <button class="btn" id="mcp-save" type="button">Spara MCP-inställningar</button>
+      </div>
+      <div class="status" id="mcp-status">Hämtar MCP-inställningar ...</div>
+    </div>
   </div>
 
   <script>
@@ -1917,6 +1967,173 @@
     loadWakeWordSettings();
     loadLanLinks();
     loadSettings();
+    
+    // MCP Management
+    const mcpEnabled = document.getElementById('mcp-enabled');
+    const mcpServersSection = document.getElementById('mcp-servers-section');
+    const mcpServersList = document.getElementById('mcp-servers-list');
+    const mcpAddServerForm = document.getElementById('mcp-add-server-form');
+    const mcpServerName = document.getElementById('mcp-server-name');
+    const mcpServerCommand = document.getElementById('mcp-server-command');
+    const mcpServerArgs = document.getElementById('mcp-server-args');
+    const mcpServerEnv = document.getElementById('mcp-server-env');
+    const mcpSaveBtn = document.getElementById('mcp-save');
+    const mcpStatus = document.getElementById('mcp-status');
+    
+    let mcpServers = {};
+    
+    mcpEnabled.addEventListener('change', () => {
+      if(mcpEnabled.checked){
+        mcpServersSection.style.display = 'block';
+      } else {
+        mcpServersSection.style.display = 'none';
+      }
+    });
+    
+    async function loadMCPSettings(){
+      try {
+        const res = await fetch('/api/mcp/settings');
+        const data = await res.json();
+        
+        if(res.ok && data.ok){
+          mcpEnabled.checked = data.enabled || false;
+          mcpServers = data.servers || {};
+          
+          if(mcpEnabled.checked){
+            mcpServersSection.style.display = 'block';
+          }
+          
+          renderMCPServers();
+          mcpStatus.textContent = 'MCP-inställningar laddade.';
+        } else {
+          mcpStatus.textContent = data.error || 'Kunde inte ladda MCP-inställningar.';
+        }
+      } catch (err){
+        console.error('Failed to load MCP settings:', err);
+        mcpStatus.textContent = 'Ett fel inträffade vid laddning av MCP-inställningar.';
+      }
+    }
+    
+    function renderMCPServers(){
+      if(Object.keys(mcpServers).length === 0){
+        mcpServersList.innerHTML = '<p style="opacity:0.75;">Inga servrar konfigurerade.</p>';
+        return;
+      }
+      
+      mcpServersList.innerHTML = '';
+      for(const [name, config] of Object.entries(mcpServers)){
+        const serverCard = document.createElement('div');
+        serverCard.style.cssText = 'padding:16px; border-radius:14px; background:rgba(15,30,55,0.6); border:1px solid rgba(62,96,146,0.4);';
+        
+        const serverName = document.createElement('div');
+        serverName.style.cssText = 'font-weight:600; font-size:18px; margin-bottom:8px;';
+        serverName.textContent = name;
+        
+        const serverCommand = document.createElement('div');
+        serverCommand.style.cssText = 'font-size:14px; opacity:0.85; margin-bottom:4px;';
+        serverCommand.textContent = `Kommando: ${config.command}`;
+        
+        const serverArgs = document.createElement('div');
+        serverArgs.style.cssText = 'font-size:14px; opacity:0.85; margin-bottom:4px;';
+        serverArgs.textContent = `Argument: ${config.args.length > 0 ? config.args.join(' ') : 'Inga'}`;
+        
+        const serverEnv = document.createElement('div');
+        serverEnv.style.cssText = 'font-size:14px; opacity:0.85; margin-bottom:12px;';
+        const envKeys = Object.keys(config.env || {});
+        serverEnv.textContent = `Miljövariabler: ${envKeys.length > 0 ? envKeys.join(', ') : 'Inga'}`;
+        
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn danger';
+        removeBtn.textContent = 'Ta bort';
+        removeBtn.style.cssText = 'font-size:14px; padding:8px 16px;';
+        removeBtn.onclick = () => removeMCPServer(name);
+        
+        serverCard.appendChild(serverName);
+        serverCard.appendChild(serverCommand);
+        serverCard.appendChild(serverArgs);
+        serverCard.appendChild(serverEnv);
+        serverCard.appendChild(removeBtn);
+        
+        mcpServersList.appendChild(serverCard);
+      }
+    }
+    
+    function removeMCPServer(name){
+      if(confirm(`Är du säker på att du vill ta bort servern "${name}"?`)){
+        delete mcpServers[name];
+        renderMCPServers();
+        mcpStatus.textContent = `Server "${name}" borttagen. Glöm inte att spara.`;
+      }
+    }
+    
+    mcpAddServerForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      
+      const name = mcpServerName.value.trim();
+      const command = mcpServerCommand.value.trim();
+      const argsText = mcpServerArgs.value.trim();
+      const envText = mcpServerEnv.value.trim();
+      
+      if(!name || !command){
+        mcpStatus.textContent = 'Servernamn och kommando krävs.';
+        return;
+      }
+      
+      if(mcpServers[name]){
+        mcpStatus.textContent = `En server med namnet "${name}" finns redan.`;
+        return;
+      }
+      
+      const args = argsText.split('\n').map(l => l.trim()).filter(l => l);
+      let env = {};
+      
+      if(envText){
+        try {
+          env = JSON.parse(envText);
+        } catch (err){
+          mcpStatus.textContent = 'Ogiltigt JSON-format för miljövariabler.';
+          return;
+        }
+      }
+      
+      mcpServers[name] = { command, args, env };
+      renderMCPServers();
+      
+      mcpServerName.value = '';
+      mcpServerCommand.value = '';
+      mcpServerArgs.value = '';
+      mcpServerEnv.value = '';
+      
+      mcpStatus.textContent = `Server "${name}" tillagd. Glöm inte att spara.`;
+    });
+    
+    mcpSaveBtn.addEventListener('click', async () => {
+      mcpStatus.textContent = 'Sparar MCP-inställningar ...';
+      
+      try {
+        const res = await fetch('/api/mcp/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: mcpEnabled.checked,
+            servers: mcpServers
+          })
+        });
+        
+        const data = await res.json();
+        
+        if(res.ok && data.ok){
+          mcpStatus.textContent = data.message || 'MCP-inställningar sparade.';
+        } else {
+          mcpStatus.textContent = data.error || 'Kunde inte spara MCP-inställningar.';
+        }
+      } catch (err){
+        console.error('Failed to save MCP settings:', err);
+        mcpStatus.textContent = 'Ett fel inträffade vid sparande av MCP-inställningar.';
+      }
+    });
+    
+    loadMCPSettings();
   </script>
 </body>
 </html>
