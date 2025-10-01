@@ -258,6 +258,32 @@ async def test_check_for_wake_word_stt_error(detector):
             assert result is False
 
 
+@pytest.mark.asyncio
+async def test_check_for_wake_word_logs_non_detection(detector, caplog):
+    """Test that non-wake-word detection is logged at INFO level for debugging."""
+    audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["hej genio", "genio"]
+    
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch("backend.wake_word.stt_transcribe_wav", return_value="hej hur mår du"):
+            mock_save.return_value = None
+            
+            # Clear previous logs and set level
+            caplog.clear()
+            with caplog.at_level("INFO", logger="backend.wake_word"):
+                result = await detector._check_for_wake_word(audio, wake_words)
+                
+            # Should return False
+            assert result is False
+            
+            # Should have logged what was heard and what was expected at INFO level
+            info_messages = [rec.message for rec in caplog.records if rec.levelname == "INFO"]
+            assert len(info_messages) > 0
+            assert any("No wake word detected" in msg for msg in info_messages)
+            assert any("hej hur mår du" in msg for msg in info_messages)
+            assert any("hej genio" in msg or "genio" in msg for msg in info_messages)
+
+
 def test_record_wake_word_audio(detector):
     """Test recording audio for wake word detection."""
     with patch("backend.wake_word.record_until_silence") as mock_record:
