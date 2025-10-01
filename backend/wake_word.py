@@ -218,6 +218,8 @@ class WakeWordDetector:
                     logger.info("Wake word '%s' detected in text: '%s'", wake_word, text_lower)
                     return True
 
+            # Log at INFO level when no wake word detected to help with debugging
+            logger.info("No wake word detected. Heard: '%s', Expected one of: %s", text_lower, wake_words)
             return False
 
         except Exception as e:
