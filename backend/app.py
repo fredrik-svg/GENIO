@@ -1,6 +1,6 @@
 
 import io, os, subprocess, logging, shlex, socket, uuid, asyncio
-from contextlib import suppress
+from contextlib import suppress, asynccontextmanager
 from ipaddress import ip_address
 from typing import Literal
 
@@ -47,7 +47,31 @@ from .wake_word import get_wake_word_detector
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Pi5 Swedish Voice Assistant")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler for startup and shutdown."""
+    # Startup: Initialize MCP client if enabled
+    try:
+        from .mcp_client import get_mcp_client
+        mcp_client = await get_mcp_client()
+        if mcp_client.is_enabled():
+            logger.info("MCP client initialized with %d tools", len(mcp_client.get_available_tools()))
+    except Exception as exc:
+        logger.warning("Failed to initialize MCP client: %s", exc)
+    
+    yield
+    
+    # Shutdown: Close MCP connections
+    try:
+        from .mcp_client import shutdown_mcp_client
+        await shutdown_mcp_client()
+        logger.info("MCP client shutdown complete")
+    except Exception as exc:
+        logger.warning("Error during MCP client shutdown: %s", exc)
+
+
+app = FastAPI(title="Pi5 Swedish Voice Assistant", lifespan=lifespan)
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 _background_upload_dir = os.path.abspath(os.path.join(static_dir, "uploads", "backgrounds"))
@@ -856,4 +880,58 @@ async def rag_reset():
     reset_rag_index()
     await notify("status: Kunskapsbas rensad.")
     return JSONResponse({"ok": True})
+
+
+# MCP endpoints
+@app.get("/api/mcp/status")
+async def mcp_status():
+    """Get MCP client status and available servers."""
+    try:
+        from .mcp_client import get_mcp_client
+        mcp_client = await get_mcp_client()
+        
+        return JSONResponse({
+            "ok": True,
+            "enabled": mcp_client.is_enabled(),
+            "servers": mcp_client.get_servers(),
+            "tools_count": len(mcp_client.get_available_tools()) if mcp_client.is_enabled() else 0,
+        })
+    except Exception as exc:
+        logger.error("Failed to get MCP status: %s", exc)
+        return JSONResponse({
+            "ok": False,
+            "error": str(exc),
+            "enabled": False,
+            "servers": [],
+            "tools_count": 0,
+        })
+
+
+@app.get("/api/mcp/tools")
+async def mcp_list_tools():
+    """List all available MCP tools."""
+    try:
+        from .mcp_client import get_mcp_client
+        mcp_client = await get_mcp_client()
+        
+        if not mcp_client.is_enabled():
+            return JSONResponse({
+                "ok": False,
+                "error": "MCP is not enabled",
+                "tools": []
+            })
+        
+        tools = mcp_client.get_available_tools()
+        return JSONResponse({
+            "ok": True,
+            "tools": tools
+        })
+    except Exception as exc:
+        logger.error("Failed to list MCP tools: %s", exc)
+        return JSONResponse({
+            "ok": False,
+            "error": str(exc),
+            "tools": []
+        })
+
 

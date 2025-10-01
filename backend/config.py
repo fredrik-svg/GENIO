@@ -104,3 +104,7 @@ WAKE_WORDS = [word.strip().lower() for word in
               (env("WAKE_WORDS", "hej genio,genio,hej assistant") or "").split(",") if word.strip()]
 WAKE_WORD_TIMEOUT = float(env("WAKE_WORD_TIMEOUT", "5.0"))  # seconds to listen for wake word
 WAKE_WORD_COOLDOWN = float(env("WAKE_WORD_COOLDOWN", "1.0"))  # cooldown between wake word detections
+
+# MCP (Model Context Protocol) configuration
+MCP_ENABLED = env_bool("MCP_ENABLED", "0")
+MCP_SERVERS = env_json("MCP_SERVERS", "")
