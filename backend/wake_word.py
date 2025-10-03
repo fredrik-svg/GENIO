@@ -6,7 +6,7 @@ from typing import Optional, Callable, Awaitable
 
 import numpy as np
 
-from .config import (
+from .config import (  # noqa: F401
     WAKE_WORD_ENABLED,
     WAKE_WORDS,
     WAKE_WORD_TIMEOUT,
@@ -30,6 +30,10 @@ class WakeWordDetector:
         self._current_settings = None
         self.last_error: Optional[str] = None
         self.last_error_time: Optional[float] = None
+        self.total_detection_attempts = 0
+        self.successful_detections = 0
+        self.last_transcription: Optional[str] = None
+        self.last_transcription_time: Optional[float] = None
 
     def _set_error(self, error_msg: str) -> None:
         """Set the last error message and timestamp."""
@@ -49,6 +53,10 @@ class WakeWordDetector:
             "last_detection_time": self.last_detection_time,
             "last_error": self.last_error,
             "last_error_time": self.last_error_time,
+            "total_detection_attempts": self.total_detection_attempts,
+            "successful_detections": self.successful_detections,
+            "last_transcription": self.last_transcription,
+            "last_transcription_time": self.last_transcription_time,
         }
 
     def _get_current_settings(self):
@@ -68,7 +76,7 @@ class WakeWordDetector:
     async def start_listening(self, on_wake_word: Callable[[], Awaitable[None]]) -> None:
         """Start continuous listening for wake words."""
         settings = self._get_current_settings()
-        
+
         if not settings['enabled']:
             error_msg = "Wake word detection is disabled in configuration"
             logger.info(error_msg)
@@ -82,7 +90,7 @@ class WakeWordDetector:
 
         # Clear any previous errors when starting
         self._clear_error()
-        
+
         logger.info("Starting wake word detection with words: %s", settings['wake_words'])
         self.is_listening = True
         self._stop_event.clear()
@@ -122,13 +130,13 @@ class WakeWordDetector:
         while not self._stop_event.is_set():
             try:
                 settings = self._get_current_settings()
-                
+
                 # Check if wake word detection was disabled
                 if not settings['enabled']:
                     logger.info("Wake word detection disabled, stopping listener")
                     self._set_error("Wake word detection was disabled during operation")
                     break
-                
+
                 # Check if we're in cooldown period
                 current_time = time.time()
                 if current_time - self.last_detection_time < settings['cooldown']:
@@ -198,6 +206,7 @@ class WakeWordDetector:
         if not wake_words or audio.size == 0:
             return False
 
+        start_time = time.time()
         try:
             # Convert audio to WAV format for STT
             buf = io.BytesIO()
@@ -206,18 +215,31 @@ class WakeWordDetector:
 
             # Transcribe the audio
             text = await stt_transcribe_wav(wav_bytes, language="sv")
+            transcription_time = time.time() - start_time
+
+            # Store transcription for debugging
+            self.last_transcription = text or ""
+            self.last_transcription_time = time.time()
+            self.total_detection_attempts += 1
+
             if not text:
+                logger.debug("No transcription received (audio duration: %.2fs, transcription time: %.2fs)",
+                             audio.size / 16000.0, transcription_time)
                 return False
 
             text_lower = text.lower().strip()
-            logger.debug("Transcribed wake word audio: '%s'", text_lower)
+            logger.debug("Transcribed wake word audio: '%s' (audio: %.2fs, transcription: %.2fs)",
+                         text_lower, audio.size / 16000.0, transcription_time)
 
             # Check if any wake word is present
             for wake_word in wake_words:
                 if wake_word.lower() in text_lower:
-                    logger.info("Wake word '%s' detected in text: '%s'", wake_word, text_lower)
+                    logger.info("✓ Wake word '%s' detected in text: '%s' (total time: %.2fs)",
+                                wake_word, text_lower, transcription_time)
+                    self.successful_detections += 1
                     return True
 
+            logger.debug("✗ No wake word found. Expected one of %s, got: '%s'", wake_words, text_lower)
             return False
 
         except Exception as e:
