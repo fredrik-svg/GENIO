@@ -157,7 +157,7 @@ Systemet stöder kontinuerlig wake word-detektering:
 
 - `WAKE_WORD_ENABLED=0` – Aktivera/avaktivera wake word-detektering
 - `WAKE_WORDS=hej genio,genio,hej assistant` – Kommaseparerad lista över wake words (svenska)
-- `WAKE_WORD_TIMEOUT=5.0` – Sekunder att lyssna för wake word-detektering
+- `WAKE_WORD_TIMEOUT=3.0` – Sekunder att lyssna för wake word-detektering
 - `WAKE_WORD_COOLDOWN=1.0` – Paus mellan wake word-detekteringar
 
 API-endpoints för wake word:
@@ -169,14 +169,67 @@ När wake word detekteras startas automatiskt en konversation.
 
 #### Felsökning när wake word inte triggar
 
-1. **Kontrollera statuspanelen i adminläget** – Öppna `http://localhost:8080/admin` och klicka på wake word-indikatorn.
+**Steg 1: Kontrollera systemstatus**
+
+1. **Statuspanel i adminläget** – Öppna `http://localhost:8080/admin` och klicka på wake word-indikatorn.
    Där visas om wake word är aktiverad, om lyssningen körs samt eventuell senaste feltext.
-2. **Läs status via API** – Kör `curl http://localhost:8080/api/wake-word/status` (eventuellt pipat till `jq`).
-   Svaret innehåller fältet `last_error` och tidsstämplar (`last_error_time`, `last_detection_time`).
-3. **Kontrollera backend-loggarna** – Kör `tail -f backend.log` om du kör manuellt, eller `journalctl -u pi5-assistant -f`
-   när tjänsten körs via systemd. Modulen `backend.wake_word` loggar detaljer om inspelning, transkribering och fel.
-4. **Verifiera mikrofonen** – Säkerställ att `arecord -l` listar din mikrofon och testa ett kort inspelningskommando
-   (`arecord -d 3 test.wav` följt av `aplay test.wav`). Utan fungerande ljudinmatning kan wake word inte aktiveras.
+
+2. **Status via API** – Kör `curl http://localhost:8080/api/wake-word/status | jq`.
+   Viktiga fält att kontrollera:
+   ```json
+   {
+     "is_listening": true,              // Ska vara true om wake word är aktivt
+     "last_detection_time": 1234567890, // Tidsstämpel för senaste detektering
+     "last_error": null,                // Eventuellt felmeddelande
+     "total_detection_attempts": 42,    // Antal försök att detektera
+     "successful_detections": 5,        // Antal lyckade detekteringar
+     "last_transcription": "hej hur mår du", // Senaste transkriberade texten
+     "last_transcription_time": 1234567890   // När senaste transkribering gjordes
+   }
+   ```
+
+**Steg 2: Analysera problemet**
+
+3. **Kontrollera vad systemet hör** – Titta på `last_transcription` i status-API:et för att se vad systemet faktiskt transkriberar.
+   Om detta fält är tomt eller inte uppdateras kan det vara ett mikrofonproblem.
+
+4. **Verifiera mikrofonen** – Säkerställ att mikrofonen fungerar:
+   ```bash
+   # Lista tillgängliga mikrofoner
+   arecord -l
+   
+   # Testa inspelning (3 sekunder)
+   arecord -d 3 test.wav
+   aplay test.wav
+   ```
+   Utan fungerande ljudinmatning kan wake word inte aktiveras.
+
+5. **Backend-loggar** – Kör `tail -f backend.log` (manuell körning) eller `journalctl -u pi5-assistant -f` (systemd).
+   Leta efter rader som visar:
+   - `Transcribed wake word audio: 'xxx'` – Visar vad systemet hörde
+   - `✓ Wake word 'genio' detected` – Lyckad detektering
+   - `✗ No wake word found. Expected one of [...]` – Misslyckad detektering med förväntade ord
+
+**Steg 3: Vanliga problem och lösningar**
+
+| Problem | Symptom | Lösning |
+|---------|---------|---------|
+| **Mikrofonen fungerar inte** | `last_transcription` är alltid tom eller null | Kontrollera `INPUT_DEVICE` i `.env`, testa med `arecord` |
+| **Fel wake word konfigurerat** | Systemet transkriberar korrekt men detekterar inte | Kontrollera `WAKE_WORDS` i `.env` eller admin-panelen. Matchar orden vad du säger? |
+| **För kort timeout** | Systemet hinner inte lyssna färdigt | Öka `WAKE_WORD_TIMEOUT` till 4.0-5.0 |
+| **Bullrig miljö** | Systemet hör bakgrundsljud | Öka `ENERGY_THRESHOLD` till 0.020-0.025 |
+| **Transkriberingen är felaktig** | Systemet hör "hej geni" istället för "hej genio" | Tala tydligare, öka mikrofonvolymen i `alsamixer`, eller lägg till varianter i `WAKE_WORDS` |
+| **Låg detektionsfrekvens** | `successful_detections` / `total_detection_attempts` < 20% | Justera wake words till enklare fraser, förbättra mikrofonkvalitet |
+
+**Steg 4: Optimera inställningar**
+
+6. **Testa olika wake words** – Vissa fraser fungerar bättre än andra:
+   - Bra: "hej genio", "okej genio", "genio"
+   - Undvik: Komplexa ord, långa fraser, ord som låter lika andra ord
+
+7. **Justera mikrofonvolym** – Kör `alsamixer`, välj din mikrofon (F6), och öka inspelningsnivån till ca 70-80%.
+
+8. **Optimera prestandainställningar** – Se avsnittet "Prestandaoptimering" ovan för rekommenderade värden.
 
 ### Byt AI-leverantör
 
@@ -247,13 +300,53 @@ För att minska responstiden från mikrofon-aktivering till svar kan följande p
 
 **Ljudinspelning:**
 - `SILENCE_DURATION=1.0` – Tid att vänta på tystnad innan inspelning avslutas (standard: 1.0s)
+  - Lägre värde (0.7-0.8s) = snabbare respons men risk för avklippt tal
+  - Högre värde (1.5-2.0s) = säkrare men långsammare
 - `AUDIO_BLOCKSIZE=512` – Mindre blockstorlek ger lägre latens men mer CPU-användning
+  - Rekommenderat: 512 (balans mellan prestanda och latens)
+  - Högre CPU-kraft: 256 eller 128 för minimal latens
 - `USE_WEBRTC_VAD=1` – Använd WebRTC Voice Activity Detection för bättre röstigenkänning
+  - Rekommenderas starkt för optimal prestanda
 - `ENERGY_THRESHOLD=0.015` – Känslighetsnivå för ljuddetektering
+  - Tyst miljö: 0.010-0.012 (mer känslig)
+  - Normal miljö: 0.015 (standard)
+  - Bullrig miljö: 0.020-0.025 (mindre känslig)
+
+**Wake word-optimering:**
+- `WAKE_WORD_TIMEOUT=3.0` – Kortare timeout för snabbare detektering (standard: 5.0s)
+  - För snabb detektering: 2.0-3.0s
+  - För pålitlig detektering i bullrig miljö: 4.0-5.0s
+- `WAKE_WORD_COOLDOWN=1.0` – Paus mellan detekteringar för att undvika dubbletter
 
 **RAG-sökning:**
 - `RAG_TOP_K=3` – Färre sökresultat = snabbare bearbetning (standard: 3)  
 - `RAG_MIN_SCORE=0.4` – Högre tröskel = färre men mer relevanta träffar
+
+**Rekommenderade inställningar för olika scenarion:**
+
+*Maximal prestanda (snabb respons):*
+```bash
+SILENCE_DURATION=0.7
+AUDIO_BLOCKSIZE=256
+WAKE_WORD_TIMEOUT=2.5
+RAG_TOP_K=2
+```
+
+*Balanserad (rekommenderas):*
+```bash
+SILENCE_DURATION=1.0
+AUDIO_BLOCKSIZE=512
+WAKE_WORD_TIMEOUT=3.0
+RAG_TOP_K=3
+```
+
+*Pålitlig (bullrig miljö):*
+```bash
+SILENCE_DURATION=1.5
+ENERGY_THRESHOLD=0.020
+WAKE_WORD_TIMEOUT=4.0
+RAG_TOP_K=3
+```
 
 Systemet använder också parallell bearbetning där TTS-generering körs samtidigt som andra operationer för maximal prestanda.
 
