@@ -276,9 +276,11 @@ class OpenAIProvider(BaseAIProvider):
 
         files = {
             "file": ("audio.wav", wav_bytes, "audio/wav"),
-            "model": (None, model_name),
-            "language": (None, language),
-            "response_format": (None, "text"),
+        }
+        data = {
+            "model": model_name,
+            "language": language,
+            "response_format": "text",
         }
         try:
             async with httpx.AsyncClient(timeout=self._stt_timeout) as client:
@@ -286,6 +288,7 @@ class OpenAIProvider(BaseAIProvider):
                     f"{self._base_url}/audio/transcriptions",
                     headers=self._headers(),
                     files=files,
+                    data=data,
                 )
                 response.raise_for_status()
                 return response.text.strip()

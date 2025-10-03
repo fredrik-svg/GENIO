@@ -62,8 +62,8 @@ class _ClientRecorder:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def post(self, url, *, headers=None, json=None, files=None):
-        self.post_calls.append({"url": url, "headers": headers, "json": json, "files": files})
+    async def post(self, url, *, headers=None, json=None, files=None, data=None):
+        self.post_calls.append({"url": url, "headers": headers, "json": json, "files": files, "data": data})
         return self._response
 
 
@@ -453,6 +453,15 @@ async def test_openai_transcribe_uses_correct_api(monkeypatch):
     
     # Should not use the responses endpoint
     assert not any(call["url"].endswith("/responses") for call in recorder.post_calls)
+    
+    # Verify the multipart form data format: file in files, other params in data
+    call = recorder.post_calls[0]
+    assert "files" in call and call["files"] is not None, "files parameter should be present"
+    assert "data" in call and call["data"] is not None, "data parameter should be present"
+    assert "file" in call["files"], "file field should be in files parameter"
+    assert call["data"]["model"] == "whisper-1", "model should be in data parameter"
+    assert call["data"]["language"] == "sv", "language should be in data parameter"
+    assert call["data"]["response_format"] == "text", "response_format should be in data parameter"
 
 
 @pytest.mark.anyio("asyncio")
