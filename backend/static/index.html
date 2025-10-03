@@ -71,9 +71,18 @@
       box-shadow: 0 0 8px rgba(40, 167, 69, 0.6);
       animation: wake-word-pulse 2s infinite;
     }
+    .wake-word-indicator.waiting {
+      background-color: #ffc107;
+      box-shadow: 0 0 12px rgba(255, 193, 7, 0.8);
+      animation: wake-word-waiting 1s infinite;
+    }
     @keyframes wake-word-pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.2); opacity: 0.8; }
+    }
+    @keyframes wake-word-waiting {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.9; }
     }
     .wake-word-status-panel {
       position: fixed;
@@ -509,8 +518,25 @@
         }
       }else if(msg.startsWith('fel:')){
         statusEl.textContent = msg;
+      }else if(msg.startsWith('wakeword:detected')){
+        setWakeWordWaiting(true);
+      }else if(msg.startsWith('wakeword:listening')){
+        setWakeWordWaiting(false);
       }
     };
+
+    // Function to set wake word waiting state
+    function setWakeWordWaiting(waiting) {
+      if (!wakeWordIndicator) return;
+      
+      if (waiting) {
+        wakeWordIndicator.className = 'wake-word-indicator waiting';
+        wakeWordIndicator.title = 'Wake word uppfattat - väntar på din fråga';
+      } else {
+        // Return to normal listening state - will be updated by next status check
+        checkWakeWordStatus();
+      }
+    }
 
     // Wake word status checking functionality
     function updateWakeWordIndicator(status) {

@@ -495,8 +495,10 @@ async def start_wake_word():
     
     async def on_wake_word():
         """Callback when wake word is detected."""
-        await notify("status: Wake word detected!")
+        await notify("wakeword:detected")
+        await notify("status: Wake word uppfattat! Väntar på din fråga...")
         data = await full_converse_flow(trigger="wake-word")
+        await notify("wakeword:listening")
         # Optionally restart listening after conversation
         # Note: The listen loop should still be running, so no need to restart
     
@@ -563,8 +565,10 @@ async def update_wake_word_settings(request: Request):
             if not detector.is_listening:
                 async def on_wake_word():
                     """Callback when wake word is detected."""
-                    await notify("status: Wake word detected!")
+                    await notify("wakeword:detected")
+                    await notify("status: Wake word uppfattat! Väntar på din fråga...")
                     data = await full_converse_flow(trigger="wake-word")
+                    await notify("wakeword:listening")
                     # Note: The listen loop should still be running, so no need to restart
                 
                 try:
