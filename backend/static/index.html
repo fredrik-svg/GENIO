@@ -37,6 +37,13 @@
       background: rgba(7, 12, 24, 0.55);
       pointer-events: none;
     }
+    body.wake-word-waiting {
+      background-color: #0d1d16;
+      transition: background-color 0.3s ease;
+    }
+    body.wake-word-waiting::before {
+      background: rgba(20, 60, 40, 0.55);
+    }
     .brand {
       position: fixed;
       top: 18px;
@@ -526,13 +533,19 @@
     };
 
     // Function to set wake word waiting state
+    let wakeWordWaiting = false;
+
     function setWakeWordWaiting(waiting) {
       if (!wakeWordIndicator) return;
-      
+
+      wakeWordWaiting = waiting;
+
       if (waiting) {
         wakeWordIndicator.className = 'wake-word-indicator waiting';
         wakeWordIndicator.title = 'Wake word uppfattat - väntar på din fråga';
+        document.body.classList.add('wake-word-waiting');
       } else {
+        document.body.classList.remove('wake-word-waiting');
         // Return to normal listening state - will be updated by next status check
         checkWakeWordStatus();
       }
@@ -540,7 +553,7 @@
 
     // Wake word status checking functionality
     function updateWakeWordIndicator(status) {
-      if (!wakeWordIndicator) return;
+      if (!wakeWordIndicator || wakeWordWaiting) return;
       
       const { enabled, wake_words, is_listening, last_error, last_error_time, last_detection_time } = status;
       
