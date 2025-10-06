@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import re
 import time
 from typing import Optional, Callable, Awaitable
 
@@ -201,6 +202,19 @@ class WakeWordDetector:
             # Don't set error here as this will be caught by the caller
             return np.array([], dtype=np.float32)
 
+    @staticmethod
+    def _normalize_phrase(text: str) -> list[str]:
+        """Normalize text into comparable word tokens."""
+        if not text:
+            return []
+
+        # Lowercase, remove punctuation, and collapse whitespace.
+        cleaned = re.sub(r"[^\w\s]", " ", text.lower(), flags=re.UNICODE)
+        cleaned = re.sub(r"\s+", " ", cleaned, flags=re.UNICODE).strip()
+        if not cleaned:
+            return []
+        return cleaned.split(" ")
+
     async def _check_for_wake_word(self, audio: np.ndarray, wake_words: list[str]) -> bool:
         """Check if the audio contains a wake word."""
         if not wake_words or audio.size == 0:
@@ -227,19 +241,41 @@ class WakeWordDetector:
                              audio.size / 16000.0, transcription_time)
                 return False
 
-            text_lower = text.lower().strip()
-            logger.debug("Transcribed wake word audio: '%s' (audio: %.2fs, transcription: %.2fs)",
-                         text_lower, audio.size / 16000.0, transcription_time)
+            normalized_transcription_tokens = self._normalize_phrase(text)
+            logger.debug(
+                "Transcribed wake word audio: '%s' (audio: %.2fs, transcription: %.2fs)",
+                " ".join(normalized_transcription_tokens),
+                audio.size / 16000.0,
+                transcription_time,
+            )
 
-            # Check if any wake word is present
+            if not normalized_transcription_tokens:
+                logger.debug("Transcription empty after normalization")
+                return False
+
+            # Check if any wake word phrase is present with word boundaries
             for wake_word in wake_words:
-                if wake_word.lower() in text_lower:
-                    logger.info("✓ Wake word '%s' detected in text: '%s' (total time: %.2fs)",
-                                wake_word, text_lower, transcription_time)
-                    self.successful_detections += 1
-                    return True
+                wake_tokens = self._normalize_phrase(wake_word)
+                if not wake_tokens:
+                    continue
 
-            logger.debug("✗ No wake word found. Expected one of %s, got: '%s'", wake_words, text_lower)
+                window = len(wake_tokens)
+                for idx in range(len(normalized_transcription_tokens) - window + 1):
+                    if normalized_transcription_tokens[idx:idx + window] == wake_tokens:
+                        logger.info(
+                            "✓ Wake word '%s' detected in text tokens '%s' (total time: %.2fs)",
+                            wake_word,
+                            " ".join(normalized_transcription_tokens),
+                            transcription_time,
+                        )
+                        self.successful_detections += 1
+                        return True
+
+            logger.debug(
+                "✗ No wake word found. Expected one of %s, got tokens: '%s'",
+                wake_words,
+                " ".join(normalized_transcription_tokens),
+            )
             return False
 
         except Exception as e:

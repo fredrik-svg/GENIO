@@ -210,14 +210,27 @@ async def test_stop_listening(detector, mock_config):
         assert detector._listen_task is None
 
 
-@pytest.mark.asyncio 
+@pytest.mark.asyncio
 async def test_check_for_wake_word_detects_wake_word(detector):
     """Test wake word detection in transcribed text."""
     audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
     wake_words = ["hej genio", "genio"]
-    
+
     with patch("backend.wake_word.save_wav_mono16") as mock_save:
         with patch("backend.wake_word.stt_transcribe_wav", return_value="hej genio vad händer"):
+            mock_save.return_value = None
+            result = await detector._check_for_wake_word(audio, wake_words)
+            assert result is True
+
+
+@pytest.mark.asyncio
+async def test_check_for_wake_word_detects_with_punctuation(detector):
+    """Wake word detection tolerates punctuation boundaries."""
+    audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["genio"]
+
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch("backend.wake_word.stt_transcribe_wav", return_value="Hej, Genio!"):
             mock_save.return_value = None
             result = await detector._check_for_wake_word(audio, wake_words)
             assert result is True
@@ -228,9 +241,25 @@ async def test_check_for_wake_word_no_wake_word(detector):
     """Test that non-wake-word text is not detected."""
     audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
     wake_words = ["hej genio", "genio"]
-    
+
     with patch("backend.wake_word.save_wav_mono16") as mock_save:
         with patch("backend.wake_word.stt_transcribe_wav", return_value="hej hur mår du"):
+            mock_save.return_value = None
+            result = await detector._check_for_wake_word(audio, wake_words)
+            assert result is False
+
+
+@pytest.mark.asyncio
+async def test_check_for_wake_word_no_partial_match(detector):
+    """Wake word should not trigger on partial word matches."""
+    audio = np.array([0.1, -0.2, 0.3], dtype=np.float32)
+    wake_words = ["genio"]
+
+    with patch("backend.wake_word.save_wav_mono16") as mock_save:
+        with patch(
+            "backend.wake_word.stt_transcribe_wav",
+            return_value="det handlar om geniometer",
+        ):
             mock_save.return_value = None
             result = await detector._check_for_wake_word(audio, wake_words)
             assert result is False
